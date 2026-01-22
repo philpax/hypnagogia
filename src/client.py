@@ -149,11 +149,17 @@ async def run_loop(
 ) -> None:
     config = get_config()
     pygame.init()
+    pygame.mixer.init()
     screen = pygame.display.set_mode(
         (config.window.width, config.window.height), pygame.RESIZABLE
     )
     pygame.scrap.init()  # Enable clipboard support (must be after display init)
     pygame.display.set_caption("hypnagogia (esc to pause, u to reset)")
+
+    # Load sound effects
+    sounds_dir = Path(__file__).parent.parent / "sounds"
+    lmb_sound = pygame.mixer.Sound(sounds_dir / "foom_0.wav")
+    rmb_sound = pygame.mixer.Sound(sounds_dir / "alert-beep.mp3")
 
     try:
         pygame.event.set_grab(True)
@@ -932,6 +938,7 @@ async def run_loop(
                 and vision_future is None
                 and last_frame is not None
             ):
+                rmb_sound.play()
                 vision_future = _vision_executor.submit(
                     describe_frame,
                     last_frame.clone(),
@@ -953,6 +960,7 @@ async def run_loop(
                 and prompt
                 and last_frame is not None
             ):
+                lmb_sound.play()
                 i2i_future = _i2i_executor.submit(
                     generate_i2i,
                     comfyui_url,
@@ -988,6 +996,7 @@ async def run_loop(
             await asyncio.sleep(0)
     finally:
         pygame.event.set_grab(False)
+        pygame.mixer.quit()
         pygame.quit()
 
 
