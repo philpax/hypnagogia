@@ -144,6 +144,7 @@ def generate_i2i(
     prompt: str,
     input_image: torch.Tensor,
     seed: int | None = None,
+    denoise: float | None = None,
 ) -> torch.Tensor:
     """Generate image from image using the SDXL Turbo i2i workflow."""
     config = get_config()
@@ -151,6 +152,8 @@ def generate_i2i(
 
     if seed is None:
         seed = random.randint(0, 2**53 - 1)
+    if denoise is None:
+        denoise = config.i2i.denoise
 
     _ensure_loaded(comfyui_url)
 
@@ -186,7 +189,7 @@ def generate_i2i(
         negative = CLIPTextEncode("text, watermark", clip)
 
         sampler = KSamplerSelect(config.i2i.sampler)
-        sigmas = SDTurboScheduler(model, config.i2i.steps, config.i2i.denoise)
+        sigmas = SDTurboScheduler(model, config.i2i.steps, denoise)
 
         samples, _ = SamplerCustom(
             model, True, seed, 1, positive, negative, sampler, sigmas, latent
