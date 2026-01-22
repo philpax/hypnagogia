@@ -7,6 +7,7 @@ import pygame
 import torch
 from world_engine import CtrlInput, WorldEngine
 
+from config import get_config
 from seed_gen import generate_i2i, generate_t2i
 
 # Separate executor for i2i so it doesn't block the engine
@@ -37,7 +38,7 @@ WHITELIST_KEYS = frozenset(PYGAME_TO_VK.values()) | frozenset({0x01, 0x02, 0x04}
 async def ctrl_stream(
     restart_event: asyncio.Event,
     pause_event: asyncio.Event,
-    mouse_sensitivity: float = 1.5,
+    mouse_sensitivity: float,
     whitelisted_keys=None,
 ) -> AsyncIterator[CtrlInput]:
     whitelisted_keys = WHITELIST_KEYS if whitelisted_keys is None else whitelisted_keys
@@ -103,14 +104,17 @@ async def run_loop(
     engine: WorldEngine,
     seed_frame: torch.Tensor | None,
     n_frames: int,
-    mouse_sensitivity: float = 1.5,
+    mouse_sensitivity: float,
     comfyui_url: str | None = None,
     prompt: str | None = None,
     image_seed: int | None = None,
-    i2i_interval: int = 120,
+    i2i_interval: int,
 ) -> None:
+    config = get_config()
     pygame.init()
-    screen = pygame.display.set_mode((1920, 1080), pygame.RESIZABLE)
+    screen = pygame.display.set_mode(
+        (config.window.width, config.window.height), pygame.RESIZABLE
+    )
     pygame.display.set_caption("U=restart, ESC=pause, close window to exit")
 
     try:
@@ -282,10 +286,12 @@ async def main(
     comfyui_url: str,
     prompt: str,
     image_seed: int | None = None,
-    n_frames: int = 4096,
-    device: str = "cuda",
-    i2i_interval: int = 120,
+    n_frames: int,
+    device: str,
+    i2i_interval: int,
+    mouse_sensitivity: float,
 ) -> None:
+    config = get_config()
     asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
 
     def _cuda_warmup() -> None:
@@ -295,18 +301,18 @@ async def main(
     await asyncio.to_thread(_cuda_warmup)
 
     engine = WorldEngine(
-        "Overworld/Waypoint-1-Small",
+        config.models.world_engine,
         device=device,
         model_config_overrides={
             "n_frames": n_frames,
-            "ae_uri": "OpenWorldLabs/owl_vae_f16_c16_distill_v0_nogan",
+            "ae_uri": config.models.vae_uri,
         },
     )
     await run_loop(
         engine=engine,
         seed_frame=None,
         n_frames=n_frames,
-        mouse_sensitivity=1.5,
+        mouse_sensitivity=mouse_sensitivity,
         comfyui_url=comfyui_url,
         prompt=prompt,
         image_seed=image_seed,
@@ -315,6 +321,7 @@ async def main(
 
 
 def cli() -> None:
+    config = get_config()
     parser = argparse.ArgumentParser(
         description="Local World client with ComfyUI seed generation"
     )
@@ -337,19 +344,25 @@ def cli() -> None:
     parser.add_argument(
         "--n-frames",
         type=int,
-        default=4096,
-        help="Number of frames (default: 4096)",
+        default=config.defaults.n_frames,
+        help=f"Number of frames (default: {config.defaults.n_frames})",
     )
     parser.add_argument(
         "--i2i-interval",
         type=int,
-        default=120,
-        help="Frames between i2i regeneration (default: 120, 0 to disable)",
+        default=config.defaults.i2i_interval,
+        help=f"Frames between i2i regeneration (default: {config.defaults.i2i_interval}, 0 to disable)",
     )
     parser.add_argument(
         "--device",
-        default="cuda",
-        help="Device to use (default: cuda)",
+        default=config.defaults.device,
+        help=f"Device to use (default: {config.defaults.device})",
+    )
+    parser.add_argument(
+        "--mouse-sensitivity",
+        type=float,
+        default=config.defaults.mouse_sensitivity,
+        help=f"Mouse sensitivity (default: {config.defaults.mouse_sensitivity})",
     )
     args = parser.parse_args()
 
@@ -361,6 +374,7 @@ def cli() -> None:
             n_frames=args.n_frames,
             device=args.device,
             i2i_interval=args.i2i_interval,
+            mouse_sensitivity=args.mouse_sensitivity,
         )
     )
 

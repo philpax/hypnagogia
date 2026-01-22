@@ -1,0 +1,30 @@
+{
+  "window": {
+    "width": 1280,
+    "height": 720
+  },
+  "defaults": {
+    "n_frames": 4096,
+    "i2i_interval": 120,
+    "device": "cuda",
+    "mouse_sensitivity": 1.5
+  },
+  "models": {
+    "world_engine": "Overworld/Waypoint-1-Small",
+    "vae_uri": "OpenWorldLabs/owl_vae_f16_c16_distill_v0_nogan"
+  },
+  "t2i": {
+    "clip": "qwen_3_4b.safetensors",
+    "vae": "flux1_ae.safetensors",
+    "unet": "z_image_turbo_bf16.safetensors",
+    "sampler": "res_multistep",
+    "steps": 9,
+    "cfg": 1
+  },
+  "i2i": {
+    "checkpoint": "SDXL Turbo 1.0 ^SDXL.safetensors",
+    "sampler": "euler_ancestral",
+    "steps": 1,
+    "denoise": 0.4
+  }
+}

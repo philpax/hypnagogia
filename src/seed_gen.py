@@ -7,6 +7,11 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
+from config import get_config
+
+# Engine resolution (width, height) - hardcoded constant
+ENGINE_RESOLUTION = (640, 360)
+
 # Cache for loaded state
 _comfy_loaded = False
 
@@ -44,9 +49,11 @@ def generate_t2i(
     comfyui_url: str,
     prompt: str,
     seed: int | None = None,
-    target_size: tuple[int, int] = (360, 640),
 ) -> torch.Tensor:
     """Generate image from text using the z-image-turbo workflow."""
+    config = get_config()
+    target_size = (ENGINE_RESOLUTION[1], ENGINE_RESOLUTION[0])  # (H, W)
+
     if seed is None:
         seed = random.randint(0, 2**53 - 1)
 
@@ -67,15 +74,24 @@ def generate_t2i(
     )
 
     with Workflow(wait=True):
-        clip = CLIPLoader("qwen_3_4b.safetensors", "lumina2", "default")
-        vae = VAELoader("flux1_ae.safetensors")
-        latent = EmptySD3LatentImage(640, 368, 1)
+        clip = CLIPLoader(config.t2i.clip, "lumina2", "default")
+        vae = VAELoader(config.t2i.vae)
+        latent = EmptySD3LatentImage(ENGINE_RESOLUTION[0], ENGINE_RESOLUTION[1], 1)
         positive = CLIPTextEncode(prompt, clip)
         negative = ConditioningZeroOut(positive)
-        unet = UNETLoader("z_image_turbo_bf16.safetensors", "default")
+        unet = UNETLoader(config.t2i.unet, "default")
         model = ModelSamplingAuraFlow(unet, 3)
         samples = KSampler(
-            model, seed, 9, 1, "res_multistep", "simple", positive, negative, latent, 1
+            model,
+            seed,
+            config.t2i.steps,
+            config.t2i.cfg,
+            config.t2i.sampler,
+            "simple",
+            positive,
+            negative,
+            latent,
+            1,
         )
         image = VAEDecode(samples, vae)
         PreviewImage(image)
@@ -128,10 +144,11 @@ def generate_i2i(
     prompt: str,
     input_image: torch.Tensor,
     seed: int | None = None,
-    denoise: float = 0.4,
-    target_size: tuple[int, int] = (360, 640),
 ) -> torch.Tensor:
     """Generate image from image using the SDXL Turbo i2i workflow."""
+    config = get_config()
+    target_size = (ENGINE_RESOLUTION[1], ENGINE_RESOLUTION[0])  # (H, W)
+
     if seed is None:
         seed = random.randint(0, 2**53 - 1)
 
@@ -156,18 +173,20 @@ def generate_i2i(
     uploaded_name = _upload_image(comfyui_url, pil_input, "frame.png")
 
     with Workflow(wait=True):
-        model, clip, vae = CheckpointLoaderSimple("SDXL Turbo 1.0 ^SDXL.safetensors")
+        model, clip, vae = CheckpointLoaderSimple(config.i2i.checkpoint)
 
         # Load and encode input image
         input_img, _ = LoadImage(uploaded_name)
-        scaled = ImageScale(input_img, "bicubic", 640, 360, "disabled")
+        scaled = ImageScale(
+            input_img, "bicubic", ENGINE_RESOLUTION[0], ENGINE_RESOLUTION[1], "disabled"
+        )
         latent = VAEEncode(scaled, vae)
 
         positive = CLIPTextEncode(prompt, clip)
         negative = CLIPTextEncode("text, watermark", clip)
 
-        sampler = KSamplerSelect("euler_ancestral")
-        sigmas = SDTurboScheduler(model, 1, denoise)
+        sampler = KSamplerSelect(config.i2i.sampler)
+        sigmas = SDTurboScheduler(model, config.i2i.steps, config.i2i.denoise)
 
         samples, _ = SamplerCustom(
             model, True, seed, 1, positive, negative, sampler, sigmas, latent
