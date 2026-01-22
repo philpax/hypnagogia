@@ -1,6 +1,6 @@
 import argparse
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import AsyncIterator
 
 import pygame
@@ -8,6 +8,9 @@ import torch
 from world_engine import CtrlInput, WorldEngine
 
 from seed_gen import generate_i2i, generate_t2i
+
+# Separate executor for i2i so it doesn't block the engine
+_i2i_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="i2i")
 
 # pygame keycode -> Windows VK int (main ANSI rows only)
 PYGAME_TO_VK = (
@@ -137,13 +140,7 @@ async def run_loop(
             if seed_frame is not None:
                 await asyncio.to_thread(engine.append_frame, seed_frame)
 
-        async def regenerate_with_i2i(current_frame: torch.Tensor) -> None:
-            """Regenerate current frame using i2i and feed back into engine."""
-            if comfyui_url and prompt:
-                refreshed = await asyncio.to_thread(
-                    generate_i2i, comfyui_url, prompt, current_frame
-                )
-                await asyncio.to_thread(engine.append_frame, refreshed)
+        i2i_future: Future | None = None
 
         def draw(img: torch.Tensor) -> None:
             img = img.detach()
@@ -236,6 +233,12 @@ async def run_loop(
         frames = 0
         last_frame: torch.Tensor | None = None
         async for ctrl in ctrls:
+            # Check if i2i task completed (non-blocking)
+            if i2i_future is not None and i2i_future.done():
+                refreshed = i2i_future.result()
+                await asyncio.to_thread(engine.append_frame, refreshed)
+                i2i_future = None
+
             if pause.is_set():
                 pause.clear()
                 if not await show_pause_menu():
@@ -255,9 +258,18 @@ async def run_loop(
             last_frame = img
             draw(img)
 
-            # Run i2i regeneration every i2i_interval frames
-            if i2i_interval > 0 and frames > 0 and frames % i2i_interval == 0:
-                await regenerate_with_i2i(last_frame)
+            # Start i2i regeneration every i2i_interval frames (if not already running)
+            if (
+                i2i_interval > 0
+                and frames > 0
+                and frames % i2i_interval == 0
+                and i2i_future is None
+                and comfyui_url
+                and prompt
+            ):
+                i2i_future = _i2i_executor.submit(
+                    generate_i2i, comfyui_url, prompt, last_frame
+                )
 
             await asyncio.sleep(0)
     finally:
