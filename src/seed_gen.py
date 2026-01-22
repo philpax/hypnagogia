@@ -131,7 +131,7 @@ def generate_i2i(
     denoise: float = 0.4,
     target_size: tuple[int, int] = (360, 640),
 ) -> torch.Tensor:
-    """Generate image from image using the z-image-turbo i2i workflow."""
+    """Generate image from image using the SDXL Turbo i2i workflow."""
     if seed is None:
         seed = random.randint(0, 2**53 - 1)
 
@@ -139,18 +139,16 @@ def generate_i2i(
 
     from comfy_script.runtime import Workflow, util
     from comfy_script.runtime.nodes import (
-        CLIPLoader,
+        CheckpointLoaderSimple,
         CLIPTextEncode,
-        ConditioningZeroOut,
         ImageScale,
-        KSampler,
+        KSamplerSelect,
         LoadImage,
-        ModelSamplingAuraFlow,
         PreviewImage,
-        UNETLoader,
+        SamplerCustom,
+        SDTurboScheduler,
         VAEDecode,
         VAEEncode,
-        VAELoader,
     )
 
     # Upload input image to ComfyUI
@@ -158,8 +156,7 @@ def generate_i2i(
     uploaded_name = _upload_image(comfyui_url, pil_input, "frame.png")
 
     with Workflow(wait=True):
-        clip = CLIPLoader("qwen_3_4b.safetensors", "lumina2", "default")
-        vae = VAELoader("flux1_ae.safetensors")
+        model, clip, vae = CheckpointLoaderSimple("SDXL Turbo 1.0 ^SDXL.safetensors")
 
         # Load and encode input image
         input_img, _ = LoadImage(uploaded_name)
@@ -167,20 +164,13 @@ def generate_i2i(
         latent = VAEEncode(scaled, vae)
 
         positive = CLIPTextEncode(prompt, clip)
-        negative = ConditioningZeroOut(positive)
-        unet = UNETLoader("z_image_turbo_bf16.safetensors", "default")
-        model = ModelSamplingAuraFlow(unet, 3)
-        samples = KSampler(
-            model,
-            seed,
-            9,
-            1,
-            "res_multistep",
-            "simple",
-            positive,
-            negative,
-            latent,
-            denoise,
+        negative = CLIPTextEncode("text, watermark", clip)
+
+        sampler = KSamplerSelect("euler_ancestral")
+        sigmas = SDTurboScheduler(model, 1, denoise)
+
+        samples, _ = SamplerCustom(
+            model, True, seed, 1, positive, negative, sampler, sigmas, latent
         )
         image = VAEDecode(samples, vae)
         PreviewImage(image)
