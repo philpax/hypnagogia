@@ -1,19 +1,17 @@
-from typing import AsyncIterator
-
 import asyncio
 import functools
 import os
-import urllib.request
 import sys
 import traceback
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from typing import AsyncIterator
 
 import pygame
 import torch
 import torch.nn.functional as F
 import torchvision
-from concurrent.futures import ThreadPoolExecutor
-
-from world_engine import WorldEngine, CtrlInput, QUANTS
+from world_engine import QUANTS, CtrlInput, WorldEngine
 
 
 def fetch_model_uris(org_uri: str = "Overworld") -> list[str]:
@@ -25,12 +23,19 @@ def fetch_model_uris(org_uri: str = "Overworld") -> list[str]:
         # Treat the old `collection_uri` default as an author/org name.
         # e.g. "OverWorld-Beta" (org) or "OpenWorldLabs" (user/org)
         api = HfApi()
-        models = [m.modelId for m in api.list_models(author=org_uri, sort="lastModified", direction=-1)]
+        models = [
+            m.modelId
+            for m in api.list_models(author=org_uri, sort="lastModified", direction=-1)
+        ]
     except HfHubHTTPError as e:
-        if getattr(e, "response", None) is not None and e.response.status_code in (401, 403):
+        if getattr(e, "response", None) is not None and e.response.status_code in (
+            401,
+            403,
+        ):
             os.environ.pop("HF_TOKEN", None)
             os.environ.pop("HUGGINGFACE_HUB_TOKEN", None)
             from huggingface_hub import logout
+
             try:
                 logout()  # clear saved token(s) on disk (if any)
             except OSError:
@@ -43,7 +48,7 @@ def fetch_model_uris(org_uri: str = "Overworld") -> list[str]:
 
 def launch_form(*, title: str = "World Engine") -> tuple[str, str | None] | None:
     import tkinter as tk
-    from tkinter import ttk, messagebox
+    from tkinter import messagebox, ttk
 
     try:
         models = fetch_model_uris()
@@ -73,14 +78,21 @@ def launch_form(*, title: str = "World Engine") -> tuple[str, str | None] | None
     qvar = tk.StringVar(value=qvals[0])
 
     ttk.Label(frm, text="Model").grid(row=0, column=0, sticky="w", **pad)
-    cmb = ttk.Combobox(frm, textvariable=var, values=["select model", "custom model", *models], state="readonly", width=60)
+    cmb = ttk.Combobox(
+        frm,
+        textvariable=var,
+        values=["select model", "custom model", *models],
+        state="readonly",
+        width=60,
+    )
     cmb.grid(row=0, column=1, sticky="ew", **pad)
 
     clbl = ttk.Label(frm, text="Custom model")
     cent = ttk.Entry(frm, textvariable=cvar, width=60)
     clbl.grid(row=1, column=0, sticky="w", **pad)
     cent.grid(row=1, column=1, sticky="ew", **pad)
-    clbl.grid_remove(); cent.grid_remove()
+    clbl.grid_remove()
+    cent.grid_remove()
 
     def _on_model(_e=None) -> None:
         show = var.get() == "custom model"
@@ -92,7 +104,9 @@ def launch_form(*, title: str = "World Engine") -> tuple[str, str | None] | None
     cmb.bind("<<ComboboxSelected>>", _on_model)
 
     ttk.Label(frm, text="Quantization").grid(row=2, column=0, sticky="w", **pad)
-    qcmb = ttk.Combobox(frm, textvariable=qvar, values=qvals, state="readonly", width=60)
+    qcmb = ttk.Combobox(
+        frm, textvariable=qvar, values=qvals, state="readonly", width=60
+    )
     qcmb.grid(row=2, column=1, sticky="ew", **pad)
 
     ttk.Separator(frm).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 8))
@@ -111,8 +125,12 @@ def launch_form(*, title: str = "World Engine") -> tuple[str, str | None] | None
 
     btns = ttk.Frame(frm)
     btns.grid(row=4, column=0, columnspan=2, sticky="e")
-    ttk.Button(btns, text="Cancel", command=lambda: close(cancel=True)).grid(row=0, column=0, padx=(0, 8))
-    ttk.Button(btns, text="Run", command=lambda: close(cancel=False)).grid(row=0, column=1)
+    ttk.Button(btns, text="Cancel", command=lambda: close(cancel=True)).grid(
+        row=0, column=0, padx=(0, 8)
+    )
+    ttk.Button(btns, text="Run", command=lambda: close(cancel=False)).grid(
+        row=0, column=1
+    )
 
     root.protocol("WM_DELETE_WINDOW", lambda: close(cancel=True))
     root.bind("<Escape>", lambda _e: close(cancel=True))
@@ -128,7 +146,7 @@ def launch_form(*, title: str = "World Engine") -> tuple[str, str | None] | None
 
 def seed_form(*, title: str = "Seed") -> str | None:
     import tkinter as tk
-    from tkinter import ttk, filedialog
+    from tkinter import filedialog, ttk
 
     root = tk.Tk()
     root.title(title)
@@ -143,17 +161,26 @@ def seed_form(*, title: str = "Seed") -> str | None:
     def pick() -> None:
         p = filedialog.askopenfilename(
             title="Select seed image",
-            filetypes=[("Images", "*.png *.jpg *.jpeg *.webp *.bmp"), ("All files", "*.*")],
+            filetypes=[
+                ("Images", "*.png *.jpg *.jpeg *.webp *.bmp"),
+                ("All files", "*.*"),
+            ],
         )
         if p:
             chosen["path"] = p
             shown.set(os.path.basename(p))
 
-    ttk.Label(frm, text="Image").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
-    ttk.Button(frm, text="Choose…", command=pick).grid(row=0, column=1, sticky="w", pady=(0, 8))
+    ttk.Label(frm, text="Image").grid(
+        row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+    )
+    ttk.Button(frm, text="Choose…", command=pick).grid(
+        row=0, column=1, sticky="w", pady=(0, 8)
+    )
     ttk.Label(frm, textvariable=shown).grid(row=0, column=2, sticky="w", pady=(0, 8))
 
-    ttk.Label(frm, text="Prompt").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+    ttk.Label(frm, text="Prompt").grid(
+        row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+    )
     ent = ttk.Entry(frm, width=52)
     ent.insert(0, "A fun game")
     ent.configure(state="disabled")
@@ -187,35 +214,49 @@ def _load_seed_frame_from_url(
     fn = f"seed_{abs(hash(url))}.png"
     urllib.request.urlretrieve(url, fn)
 
-    img = torchvision.io.read_image(fn)          # (C,H,W) uint8
-    img = img[:3].unsqueeze(0).float()           # (1,3,H,W)
-    frame = F.interpolate(img, size=target_size, mode="bilinear", align_corners=False)[0]
+    img = torchvision.io.read_image(fn)  # (C,H,W) uint8
+    img = img[:3].unsqueeze(0).float()  # (1,3,H,W)
+    frame = F.interpolate(img, size=target_size, mode="bilinear", align_corners=False)[
+        0
+    ]
     return frame.to(torch.uint8).permute(1, 2, 0).contiguous()  # (H,W,3)
 
 
 def load_seed_frame(target_size: tuple[int, int] = (360, 640)) -> torch.Tensor:
     import random
+
     url = random.choice(SEED_FRAME_URLS)
     return _load_seed_frame_from_url(url, target_size).clone()
 
 
-def load_seed_frame_from_file(path: str, target_size: tuple[int, int] = (360, 640)) -> torch.Tensor:
-    from torchvision.io import read_file, decode_image, ImageReadMode
+def load_seed_frame_from_file(
+    path: str, target_size: tuple[int, int] = (360, 640)
+) -> torch.Tensor:
+    from torchvision.io import ImageReadMode, decode_image, read_file
+
     data = read_file(path)  # bytes -> uint8 1D tensor
-    img = decode_image(data, mode=ImageReadMode.RGB)  # (3,H,W) uint8 (includes WEBP if supported)
+    img = decode_image(
+        data, mode=ImageReadMode.RGB
+    )  # (3,H,W) uint8 (includes WEBP if supported)
     img = img.unsqueeze(0).float()  # (1,3,H,W)
-    frame = F.interpolate(img, size=target_size, mode="bilinear", align_corners=False)[0]
+    frame = F.interpolate(img, size=target_size, mode="bilinear", align_corners=False)[
+        0
+    ]
     return frame.to(dtype=torch.uint8).permute(1, 2, 0).contiguous()
 
 
 # pygame keycode -> Windows VK int (main ANSI rows only)
 PYGAME_TO_VK = (
     {pygame.key.key_code(ch): ord(ch) for ch in "1234567890"}  # 1..0
-    | {pygame.K_MINUS: 0xBD, pygame.K_EQUALS: 0xBB}            # - =
+    | {pygame.K_MINUS: 0xBD, pygame.K_EQUALS: 0xBB}  # - =
     | {pygame.key.key_code(ch): ord(ch.upper()) for ch in "qwertyuiop"}
-    | {pygame.K_LEFTBRACKET: 0xDB, pygame.K_RIGHTBRACKET: 0xDD, pygame.K_BACKSLASH: 0xDC}  # [ ] \|
+    | {
+        pygame.K_LEFTBRACKET: 0xDB,
+        pygame.K_RIGHTBRACKET: 0xDD,
+        pygame.K_BACKSLASH: 0xDC,
+    }  # [ ] \|
     | {pygame.key.key_code(ch): ord(ch.upper()) for ch in "asdfghjkl"}
-    | {pygame.K_SEMICOLON: 0xBA, pygame.K_QUOTE: 0xDE}         # ;: '"
+    | {pygame.K_SEMICOLON: 0xBA, pygame.K_QUOTE: 0xDE}  # ;: '"
     | {pygame.key.key_code(ch): ord(ch.upper()) for ch in "zxcvbnm"}
     | {pygame.K_COMMA: 0xBC, pygame.K_PERIOD: 0xBE, pygame.K_SLASH: 0xBF}  # ,< .> /?
     | {pygame.K_SPACE: 0x20, pygame.K_LSHIFT: 0x10, pygame.K_RSHIFT: 0x10}
@@ -237,7 +278,11 @@ async def ctrl_stream(
 
     codes = (
         {("k", k): v for k, v in PYGAME_TO_VK.items()}
-        | {("m", 1): 0x01, ("m", 2): 0x04, ("m", 3): 0x02}  # note: pygame has middle wheel as m2
+        | {
+            ("m", 1): 0x01,
+            ("m", 2): 0x04,
+            ("m", 3): 0x02,
+        }  # note: pygame has middle wheel as m2
     )
     codes = {k: v for k, v in codes.items() if v in whitelisted_keys}
 
@@ -279,12 +324,15 @@ async def ctrl_stream(
 
         mb = pygame.mouse.get_pressed(3)
         btn.update(
-            c for i, down in enumerate(mb, 1)
+            c
+            for i, down in enumerate(mb, 1)
             if down and (c := codes.get(("m", i))) is not None
         )
 
         dx, dy = pygame.mouse.get_rel()
-        yield CtrlInput(button=btn, mouse=(dx * mouse_sensitivity, dy * mouse_sensitivity))
+        yield CtrlInput(
+            button=btn, mouse=(dx * mouse_sensitivity, dy * mouse_sensitivity)
+        )
         await asyncio.sleep(0)
 
 
@@ -334,8 +382,14 @@ async def run_loop(
                     sens = SENS_MIN + t * (SENS_MAX - SENS_MIN)
 
             screen.fill((0, 0, 0))
-            screen.blit(font.render("Mouse sensitivity", True, (255, 255, 255)), (24, r.top - 28))
-            screen.blit(font.render(f"{sens:.2f}", True, (255, 255, 255)), (r.right + 12, r.top - 6))
+            screen.blit(
+                font.render("Mouse sensitivity", True, (255, 255, 255)),
+                (24, r.top - 28),
+            )
+            screen.blit(
+                font.render(f"{sens:.2f}", True, (255, 255, 255)),
+                (r.right + 12, r.top - 6),
+            )
             pygame.draw.rect(screen, (80, 80, 80), r)
             pygame.draw.rect(screen, (220, 220, 220), knob)
             pygame.display.flip()
@@ -349,7 +403,9 @@ async def run_loop(
             return
         mouse_sensitivity = picked
         pygame.event.set_grab(True)
-        pygame.display.set_caption("U=restart, DEL=random seed, INSERT=select seed, ESC=menu")
+        pygame.display.set_caption(
+            "U=restart, DEL=random seed, INSERT=select seed, ESC=menu"
+        )
 
         restart = asyncio.Event()
         seed_req = asyncio.Event()
@@ -362,7 +418,9 @@ async def run_loop(
         )
         limit = max(1, n_frames - 2)
 
-        async def reset(*, reload_seed: bool = False, seed_path: str | None = None) -> None:
+        async def reset(
+            *, reload_seed: bool = False, seed_path: str | None = None
+        ) -> None:
             nonlocal seed
             await asyncio.to_thread(engine.reset)
             if reload_seed or seed is None:
@@ -425,13 +483,13 @@ async def main(
     device: str = "cuda",
     quant: str | None = None,
 ) -> None:
-
     # warmup cublas
     asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
 
     def _cuda_warmup() -> None:
         with torch.cuda.device(device):
             torch.cuda.current_blas_handle()
+
     await asyncio.to_thread(_cuda_warmup)
 
     seed = None
@@ -441,7 +499,7 @@ async def main(
         device=device,
         model_config_overrides={
             "n_frames": n_frames,
-            "ae_uri": "OpenWorldLabs/owl_vae_f16_c16_distill_v0_nogan"
+            "ae_uri": "OpenWorldLabs/owl_vae_f16_c16_distill_v0_nogan",
         },
         quant=quant,
     )
@@ -453,9 +511,11 @@ def ensure_hf_token() -> None:
     if t:
         return
     from huggingface_hub import get_token, login
+
     t = get_token()
     import tkinter as tk
     from tkinter import simpledialog
+
     if not t:
         r = tk.Tk()
         r.withdraw()
@@ -480,9 +540,11 @@ def _crash_popup(tb: str) -> None:
     txt.pack(fill="both", expand=True)
     txt.insert("1.0", tb)
     txt.configure(state="disabled")
+
     def copy() -> None:
         root.clipboard_clear()
         root.clipboard_append(tb)
+
     tk.Button(root, text="Copy", command=copy).pack(side="right", padx=6, pady=6)
     tk.Button(root, text="Close", command=root.destroy).pack(side="right", pady=6)
     root.mainloop()
