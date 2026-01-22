@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import AsyncIterator
 
@@ -130,7 +131,8 @@ async def run_loop(
         limit = max(1, n_frames - 2)
 
         async def reset(*, reload_seed: bool = False) -> None:
-            nonlocal seed_frame
+            nonlocal seed_frame, reset_time
+            reset_time = time.time()
             await asyncio.to_thread(engine.reset)
             if reload_seed or seed_frame is None:
                 if comfyui_url and prompt:
@@ -145,8 +147,30 @@ async def run_loop(
                 await asyncio.to_thread(engine.append_frame, seed_frame)
 
         i2i_future: Future | None = None
+        reset_time: float = time.time()
+        prompt_font_size: int | None = None
+        cached_prompt_surface: pygame.Surface | None = None
+        cached_prompt_shadow: pygame.Surface | None = None
+        cached_window_width: int | None = None
+
+        def calculate_prompt_font_size(
+            text: str, max_width: int, padding: int = 20
+        ) -> int:
+            """Calculate font size so the prompt fits within max_width."""
+            available_width = max_width - padding * 2
+            for size in range(48, 8, -1):
+                test_font = pygame.font.SysFont(None, size)
+                text_width = test_font.size(text)[0]
+                if text_width <= available_width:
+                    return size
+            return 8
 
         def draw(img: torch.Tensor) -> None:
+            nonlocal \
+                prompt_font_size, \
+                cached_prompt_surface, \
+                cached_prompt_shadow, \
+                cached_window_width
             img = img.detach()
             if img.dtype != torch.uint8:
                 img = img.clamp(0, 255).to(torch.uint8)
@@ -154,6 +178,38 @@ async def run_loop(
             surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))  # (W,H,3)
             surf = pygame.transform.scale(surf, screen.get_size())
             screen.blit(surf, (0, 0))
+
+            sw, sh = screen.get_size()
+
+            # Draw prompt at bottom-left (recalculate if window width changed)
+            if prompt:
+                if cached_window_width != sw or cached_prompt_surface is None:
+                    prompt_font_size = calculate_prompt_font_size(prompt, sw)
+                    prompt_font = pygame.font.SysFont(None, prompt_font_size)
+                    cached_prompt_surface = prompt_font.render(
+                        prompt, True, (255, 255, 255)
+                    )
+                    cached_prompt_shadow = prompt_font.render(prompt, True, (0, 0, 0))
+                    cached_window_width = sw
+                screen.blit(
+                    cached_prompt_shadow,
+                    (11, sh - cached_prompt_surface.get_height() - 9),
+                )
+                screen.blit(
+                    cached_prompt_surface,
+                    (10, sh - cached_prompt_surface.get_height() - 10),
+                )
+
+            # Draw timer at top-right (stylized)
+            elapsed = time.time() - reset_time
+            timer_text = f"{elapsed:.1f}s"
+            timer_font = pygame.font.SysFont("consolas", 36)
+            timer_surface = timer_font.render(timer_text, True, (255, 255, 255))
+            timer_shadow = timer_font.render(timer_text, True, (0, 0, 0))
+            timer_x = sw - timer_surface.get_width() - 15
+            screen.blit(timer_shadow, (timer_x + 2, 12))
+            screen.blit(timer_surface, (timer_x, 10))
+
             pygame.display.flip()
 
         async def show_pause_menu() -> bool:
