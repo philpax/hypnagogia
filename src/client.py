@@ -1,27 +1,13 @@
+import argparse
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncIterator
 
 import pygame
 import torch
-import torch.nn.functional as F
 from world_engine import CtrlInput, WorldEngine
 
-
-def load_seed_frame_from_file(
-    path: str, target_size: tuple[int, int] = (360, 640)
-) -> torch.Tensor:
-    from torchvision.io import ImageReadMode, decode_image, read_file
-
-    data = read_file(path)  # bytes -> uint8 1D tensor
-    img = decode_image(
-        data, mode=ImageReadMode.RGB
-    )  # (3,H,W) uint8 (includes WEBP if supported)
-    img = img.unsqueeze(0).float()  # (1,3,H,W)
-    frame = F.interpolate(img, size=target_size, mode="bilinear", align_corners=False)[
-        0
-    ]
-    return frame.to(dtype=torch.uint8).permute(1, 2, 0).contiguous()
+from seed_gen import generate_seed_image
 
 
 # pygame keycode -> Windows VK int (main ANSI rows only)
@@ -113,9 +99,12 @@ async def ctrl_stream(
 async def run_loop(
     *,
     engine: WorldEngine,
-    seed: torch.Tensor | None,
+    seed_frame: torch.Tensor | None,
     n_frames: int,
     mouse_sensitivity: float = 1.5,
+    comfyui_url: str | None = None,
+    prompt: str | None = None,
+    image_seed: int | None = None,
 ) -> None:
     pygame.init()
     screen = pygame.display.set_mode((1920, 1080), pygame.RESIZABLE)
@@ -134,12 +123,17 @@ async def run_loop(
         limit = max(1, n_frames - 2)
 
         async def reset(*, reload_seed: bool = False) -> None:
-            nonlocal seed
+            nonlocal seed_frame
             await asyncio.to_thread(engine.reset)
-            if reload_seed or seed is None:
-                seed = await asyncio.to_thread(load_seed_frame_from_file, "default.png")
-            if seed is not None:
-                await asyncio.to_thread(engine.append_frame, seed)
+            if reload_seed or seed_frame is None:
+                if comfyui_url and prompt:
+                    seed_frame = await asyncio.to_thread(
+                        generate_seed_image, comfyui_url, prompt, image_seed
+                    )
+                else:
+                    raise ValueError("ComfyUI URL and prompt are required for seed generation")
+            if seed_frame is not None:
+                await asyncio.to_thread(engine.append_frame, seed_frame)
 
         def draw(img: torch.Tensor) -> None:
             img = img.detach()
@@ -237,6 +231,9 @@ async def run_loop(
 
 async def main(
     *,
+    comfyui_url: str,
+    prompt: str,
+    image_seed: int | None = None,
     n_frames: int = 4096,
     device: str = "cuda",
 ) -> None:
@@ -248,8 +245,6 @@ async def main(
 
     await asyncio.to_thread(_cuda_warmup)
 
-    seed = None
-
     engine = WorldEngine(
         "Overworld/Waypoint-1-Small",
         device=device,
@@ -258,8 +253,56 @@ async def main(
             "ae_uri": "OpenWorldLabs/owl_vae_f16_c16_distill_v0_nogan",
         },
     )
-    await run_loop(engine=engine, seed=seed, n_frames=n_frames, mouse_sensitivity=1.5)
+    await run_loop(
+        engine=engine,
+        seed_frame=None,
+        n_frames=n_frames,
+        mouse_sensitivity=1.5,
+        comfyui_url=comfyui_url,
+        prompt=prompt,
+        image_seed=image_seed,
+    )
+
+
+def cli() -> None:
+    parser = argparse.ArgumentParser(description="Local World client with ComfyUI seed generation")
+    parser.add_argument(
+        "--url",
+        required=True,
+        help="ComfyUI server URL (e.g., http://127.0.0.1:8188)",
+    )
+    parser.add_argument(
+        "--prompt",
+        required=True,
+        help="Text prompt for seed image generation",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed for image generation (default: random)",
+    )
+    parser.add_argument(
+        "--n-frames",
+        type=int,
+        default=4096,
+        help="Number of frames (default: 4096)",
+    )
+    parser.add_argument(
+        "--device",
+        default="cuda",
+        help="Device to use (default: cuda)",
+    )
+    args = parser.parse_args()
+
+    asyncio.run(main(
+        comfyui_url=args.url,
+        prompt=args.prompt,
+        image_seed=args.seed,
+        n_frames=args.n_frames,
+        device=args.device,
+    ))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    cli()

@@ -8,10 +8,8 @@ dependencies = [
     "huggingface_hub[hf_xet]",
     "triton-windows==3.5.1.post23; sys_platform == 'win32'",
     "triton>=3.5.1; sys_platform == 'linux'",
+    "comfy-script[default]",
 ]
-
-[project.scripts]
-client = "client:main"
 
 [tool.uv]
 index-strategy = "unsafe-best-match"
