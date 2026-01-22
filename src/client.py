@@ -1,7 +1,9 @@
 import argparse
 import asyncio
+import math
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import AsyncIterator
 
 import pygame
@@ -10,6 +12,14 @@ from world_engine import CtrlInput, WorldEngine
 
 from config import get_config
 from seed_gen import generate_i2i, generate_t2i
+
+
+@dataclass
+class PauseMenuResult:
+    action: str  # "resume", "quit", or "regenerate"
+    new_prompt: str | None = None
+    regenerated_frame: torch.Tensor | None = None
+    reset_with_seed: bool = False  # True = T2I reset, False = I2I append
 
 # Separate executor for i2i so it doesn't block the engine
 _i2i_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="i2i")
@@ -116,7 +126,8 @@ async def run_loop(
     screen = pygame.display.set_mode(
         (config.window.width, config.window.height), pygame.RESIZABLE
     )
-    pygame.display.set_caption("U=restart, ESC=pause, close window to exit")
+    pygame.scrap.init()  # Enable clipboard support (must be after display init)
+    pygame.display.set_caption("hypnagogia (esc to pause, u to reset)")
 
     try:
         pygame.event.set_grab(True)
@@ -212,76 +223,431 @@ async def run_loop(
 
             pygame.display.flip()
 
-        async def show_pause_menu() -> bool:
-            """Show pause menu. Returns True to resume, False to quit."""
+        async def show_pause_menu() -> PauseMenuResult:
+            """Show pause menu with prompt editing. Returns PauseMenuResult."""
+            nonlocal prompt
             pygame.event.set_grab(False)
             pygame.mouse.set_visible(True)
-            font = pygame.font.SysFont(None, 48)
-            small_font = pygame.font.SysFont(None, 32)
+            pygame.key.set_repeat(400, 50)  # Enable key repeat (400ms delay, 50ms interval)
+
+            # Fonts
+            title_font = pygame.font.SysFont(None, 48)
+            label_font = pygame.font.SysFont(None, 32)
+            mono_font = pygame.font.SysFont("consolas", 18)  # 75% of 24
+            button_font = pygame.font.SysFont(None, 32)
 
             # Capture current frame as background
             background = screen.copy()
 
-            resume_rect = pygame.Rect(0, 0, 200, 50)
-            quit_rect = pygame.Rect(0, 0, 200, 50)
+            # Text input state
+            input_text = prompt or ""
+            cursor_pos = len(input_text)
+            scroll_offset = 0
+            input_active = False
+            cursor_visible = True
+            cursor_blink_time = 0.0
+
+            # Checkbox state
+            reset_checked = False
+
+            # Menu state
+            MENU, GENERATING = "menu", "generating"
+            state = MENU
+            gen_future: Future | None = None
+            spinner_angle = 0.0
+            error_message: str | None = None
+            error_time = 0.0
+
+            # UI dimensions (input_width calculated per-frame based on window size)
+            input_height = 32
+            input_padding = 8
+            checkbox_size = 24
+            button_width = 100
+            button_height = 40
+
+            # Calculate char width for monospace font
+            char_width = mono_font.size("M")[0]
 
             while True:
                 sw, sh = screen.get_size()
-                resume_rect.center = (sw // 2, sh // 2 - 30)
-                quit_rect.center = (sw // 2, sh // 2 + 40)
+                dt = 1 / 60
 
+                # Layout calculations (centered)
+                center_x = sw // 2
+                base_y = sh // 2 - 80
+                input_width = int(sw * 0.8)  # 80% of window width
+
+                input_rect = pygame.Rect(
+                    center_x - input_width // 2,
+                    base_y,
+                    input_width,
+                    input_height,
+                )
+                checkbox_rect = pygame.Rect(
+                    center_x - input_width // 2,
+                    base_y + 45,
+                    checkbox_size,
+                    checkbox_size,
+                )
+                checkbox_label_x = checkbox_rect.right + 10
+
+                # Button row (4 buttons now: Resume, Clear, Submit, Quit)
+                button_y = base_y + 90
+                button_spacing = 15
+                total_buttons_width = button_width * 4 + button_spacing * 3
+                resume_rect = pygame.Rect(
+                    center_x - total_buttons_width // 2,
+                    button_y,
+                    button_width,
+                    button_height,
+                )
+                clear_rect = pygame.Rect(
+                    resume_rect.right + button_spacing,
+                    button_y,
+                    button_width,
+                    button_height,
+                )
+                submit_rect = pygame.Rect(
+                    clear_rect.right + button_spacing,
+                    button_y,
+                    button_width,
+                    button_height,
+                )
+                quit_rect = pygame.Rect(
+                    submit_rect.right + button_spacing,
+                    button_y,
+                    button_width,
+                    button_height,
+                )
+
+                # Event handling
                 for e in pygame.event.get():
                     if e.type == pygame.QUIT:
-                        return False
-                    if e.type == pygame.KEYDOWN:
-                        if e.key == pygame.K_ESCAPE:
-                            return True
-                    if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
-                        if resume_rect.collidepoint(e.pos):
-                            return True
-                        if quit_rect.collidepoint(e.pos):
-                            return False
+                        pygame.key.set_repeat(0)  # Disable key repeat
+                        return PauseMenuResult(action="quit")
 
-                # Redraw background each frame
+                    if state == MENU:
+                        if e.type == pygame.KEYDOWN:
+                            if e.key == pygame.K_ESCAPE:
+                                pygame.key.set_repeat(0)  # Disable key repeat
+                                return PauseMenuResult(action="resume")
+
+                            if input_active:
+                                if e.key == pygame.K_BACKSPACE:
+                                    if cursor_pos > 0:
+                                        input_text = (
+                                            input_text[: cursor_pos - 1]
+                                            + input_text[cursor_pos:]
+                                        )
+                                        cursor_pos -= 1
+                                elif e.key == pygame.K_DELETE:
+                                    if cursor_pos < len(input_text):
+                                        input_text = (
+                                            input_text[:cursor_pos]
+                                            + input_text[cursor_pos + 1 :]
+                                        )
+                                elif e.key == pygame.K_LEFT:
+                                    cursor_pos = max(0, cursor_pos - 1)
+                                elif e.key == pygame.K_RIGHT:
+                                    cursor_pos = min(len(input_text), cursor_pos + 1)
+                                elif e.key == pygame.K_HOME:
+                                    cursor_pos = 0
+                                elif e.key == pygame.K_END:
+                                    cursor_pos = len(input_text)
+                                elif e.key == pygame.K_v and (
+                                    e.mod & pygame.KMOD_CTRL
+                                ):
+                                    # Paste from clipboard
+                                    try:
+                                        clipboard = pygame.scrap.get(
+                                            pygame.SCRAP_TEXT
+                                        )
+                                        if clipboard:
+                                            paste_text = clipboard.decode(
+                                                "utf-8"
+                                            ).rstrip("\x00")
+                                            input_text = (
+                                                input_text[:cursor_pos]
+                                                + paste_text
+                                                + input_text[cursor_pos:]
+                                            )
+                                            cursor_pos += len(paste_text)
+                                    except Exception:
+                                        pass
+                                elif e.key == pygame.K_RETURN:
+                                    # Submit on Enter
+                                    if input_text.strip():
+                                        state = GENERATING
+                                        if reset_checked:
+                                            gen_future = _i2i_executor.submit(
+                                                generate_t2i,
+                                                comfyui_url,
+                                                input_text,
+                                                image_seed,
+                                            )
+                                        else:
+                                            gen_future = _i2i_executor.submit(
+                                                generate_i2i,
+                                                comfyui_url,
+                                                input_text,
+                                                last_frame,
+                                            )
+
+                        if e.type == pygame.TEXTINPUT and input_active:
+                            input_text = (
+                                input_text[:cursor_pos]
+                                + e.text
+                                + input_text[cursor_pos:]
+                            )
+                            cursor_pos += len(e.text)
+
+                        if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                            # Check text input click
+                            if input_rect.collidepoint(e.pos):
+                                input_active = True
+                                # Position cursor based on click
+                                rel_x = e.pos[0] - input_rect.x - input_padding
+                                click_char = scroll_offset + int(rel_x / char_width)
+                                cursor_pos = max(
+                                    0, min(len(input_text), click_char)
+                                )
+                            else:
+                                input_active = False
+
+                            # Check checkbox click
+                            checkbox_hit = pygame.Rect(
+                                checkbox_rect.x,
+                                checkbox_rect.y,
+                                250,
+                                checkbox_size,
+                            )
+                            if checkbox_hit.collidepoint(e.pos):
+                                reset_checked = not reset_checked
+
+                            # Check button clicks
+                            if resume_rect.collidepoint(e.pos):
+                                pygame.key.set_repeat(0)  # Disable key repeat
+                                return PauseMenuResult(action="resume")
+                            if clear_rect.collidepoint(e.pos):
+                                input_text = ""
+                                cursor_pos = 0
+                                scroll_offset = 0
+                            if quit_rect.collidepoint(e.pos):
+                                pygame.key.set_repeat(0)  # Disable key repeat
+                                return PauseMenuResult(action="quit")
+                            if submit_rect.collidepoint(e.pos):
+                                if input_text.strip():
+                                    state = GENERATING
+                                    if reset_checked:
+                                        gen_future = _i2i_executor.submit(
+                                            generate_t2i,
+                                            comfyui_url,
+                                            input_text,
+                                            image_seed,
+                                        )
+                                    else:
+                                        gen_future = _i2i_executor.submit(
+                                            generate_i2i,
+                                            comfyui_url,
+                                            input_text,
+                                            last_frame,
+                                        )
+
+                # Check generation completion
+                if state == GENERATING and gen_future is not None:
+                    if gen_future.done():
+                        try:
+                            result_frame = gen_future.result()
+                            pygame.key.set_repeat(0)  # Disable key repeat
+                            return PauseMenuResult(
+                                action="regenerate",
+                                new_prompt=input_text,
+                                regenerated_frame=result_frame,
+                                reset_with_seed=reset_checked,
+                            )
+                        except Exception as ex:
+                            error_message = f"Generation failed: {ex}"
+                            error_time = time.time()
+                            state = MENU
+                            gen_future = None
+                            print(f"Generation error: {ex}")
+
+                # Clear error after 3 seconds
+                if error_message and time.time() - error_time > 3.0:
+                    error_message = None
+
+                # Update cursor blink
+                cursor_blink_time += dt
+                if cursor_blink_time >= 0.5:
+                    cursor_blink_time = 0.0
+                    cursor_visible = not cursor_visible
+
+                # Update spinner
+                spinner_angle += dt * 360  # One rotation per second
+
+                # Calculate scroll offset to keep cursor visible
+                visible_chars = (input_width - 2 * input_padding) // char_width
+                if cursor_pos < scroll_offset:
+                    scroll_offset = cursor_pos
+                elif cursor_pos >= scroll_offset + visible_chars:
+                    scroll_offset = cursor_pos - visible_chars + 1
+                scroll_offset = max(0, scroll_offset)
+
+                # --- Drawing ---
                 screen.blit(background, (0, 0))
 
-                # Draw transparent overlay
+                # Semi-transparent overlay
                 overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
-                overlay.fill((0, 0, 0, 100))
+                overlay.fill((0, 0, 0, 150))
                 screen.blit(overlay, (0, 0))
 
-                # Draw title
-                title = font.render("PAUSED", True, (255, 255, 255))
-                screen.blit(title, (sw // 2 - title.get_width() // 2, sh // 2 - 120))
+                # Title
+                title = title_font.render("PAUSED", True, (255, 255, 255))
+                screen.blit(title, (center_x - title.get_width() // 2, base_y - 80))
 
-                # Draw buttons
-                mouse_pos = pygame.mouse.get_pos()
-                for rect, text in [(resume_rect, "Resume"), (quit_rect, "Quit")]:
-                    color = (
-                        (100, 100, 100, 200)
-                        if rect.collidepoint(mouse_pos)
-                        else (60, 60, 60, 200)
+                # Prompt label
+                prompt_label = label_font.render("Prompt:", True, (255, 255, 255))
+                screen.blit(
+                    prompt_label,
+                    (input_rect.x, input_rect.y - prompt_label.get_height() - 5),
+                )
+
+                # Text input box
+                input_color = (80, 80, 80) if input_active else (50, 50, 50)
+                border_color = (150, 150, 255) if input_active else (100, 100, 100)
+                pygame.draw.rect(screen, input_color, input_rect, border_radius=4)
+                pygame.draw.rect(screen, border_color, input_rect, 2, border_radius=4)
+
+                # Render visible text with clipping
+                clip_rect = pygame.Rect(
+                    input_rect.x + input_padding,
+                    input_rect.y,
+                    input_width - 2 * input_padding,
+                    input_height,
+                )
+                visible_text = input_text[
+                    scroll_offset : scroll_offset + visible_chars + 1
+                ]
+                text_surface = mono_font.render(visible_text, True, (255, 255, 255))
+                text_y = input_rect.y + (input_height - text_surface.get_height()) // 2
+
+                # Draw text
+                screen.set_clip(clip_rect)
+                screen.blit(text_surface, (input_rect.x + input_padding, text_y))
+                screen.set_clip(None)
+
+                # Draw cursor
+                if input_active and cursor_visible:
+                    cursor_x = (
+                        input_rect.x
+                        + input_padding
+                        + (cursor_pos - scroll_offset) * char_width
                     )
-                    btn_surf = pygame.Surface(
-                        (rect.width, rect.height), pygame.SRCALPHA
-                    )
-                    pygame.draw.rect(
-                        btn_surf, color, btn_surf.get_rect(), border_radius=8
-                    )
-                    pygame.draw.rect(
-                        btn_surf,
+                    pygame.draw.line(
+                        screen,
                         (255, 255, 255),
-                        btn_surf.get_rect(),
+                        (cursor_x, input_rect.y + 4),
+                        (cursor_x, input_rect.y + input_height - 4),
                         2,
-                        border_radius=8,
                     )
-                    screen.blit(btn_surf, rect.topleft)
-                    label = small_font.render(text, True, (255, 255, 255))
+
+                # Checkbox
+                pygame.draw.rect(
+                    screen, (50, 50, 50), checkbox_rect, border_radius=4
+                )
+                pygame.draw.rect(
+                    screen, (100, 100, 100), checkbox_rect, 2, border_radius=4
+                )
+                if reset_checked:
+                    inner = checkbox_rect.inflate(-8, -8)
+                    pygame.draw.rect(screen, (100, 200, 100), inner, border_radius=2)
+
+                checkbox_label = label_font.render(
+                    "Reset (generate new seed)", True, (255, 255, 255)
+                )
+                screen.blit(
+                    checkbox_label,
+                    (
+                        checkbox_label_x,
+                        checkbox_rect.centery - checkbox_label.get_height() // 2,
+                    ),
+                )
+
+                # Buttons
+                mouse_pos = pygame.mouse.get_pos()
+                buttons = [
+                    (resume_rect, "Resume"),
+                    (clear_rect, "Clear"),
+                    (submit_rect, "Submit"),
+                    (quit_rect, "Quit"),
+                ]
+                for rect, text in buttons:
+                    is_submit = text == "Submit"
+                    is_hovered = rect.collidepoint(mouse_pos)
+
+                    if state == GENERATING and is_submit:
+                        color = (40, 40, 40)  # Disabled
+                    elif is_hovered:
+                        color = (100, 100, 100)
+                    else:
+                        color = (60, 60, 60)
+
+                    pygame.draw.rect(screen, color, rect, border_radius=8)
+                    pygame.draw.rect(
+                        screen, (255, 255, 255), rect, 2, border_radius=8
+                    )
+
+                    label = button_font.render(text, True, (255, 255, 255))
                     screen.blit(
                         label,
                         (
                             rect.centerx - label.get_width() // 2,
                             rect.centery - label.get_height() // 2,
+                        ),
+                    )
+
+                # Spinner during generation
+                if state == GENERATING:
+                    spinner_x = center_x
+                    spinner_y = button_y + button_height + 40
+                    spinner_radius = 20
+
+                    # Draw rotating arc
+                    start_angle = math.radians(spinner_angle)
+                    end_angle = start_angle + math.radians(270)
+                    arc_rect = pygame.Rect(
+                        spinner_x - spinner_radius,
+                        spinner_y - spinner_radius,
+                        spinner_radius * 2,
+                        spinner_radius * 2,
+                    )
+                    pygame.draw.arc(
+                        screen,
+                        (150, 150, 255),
+                        arc_rect,
+                        start_angle,
+                        end_angle,
+                        4,
+                    )
+
+                    gen_label = label_font.render(
+                        "Generating...", True, (200, 200, 200)
+                    )
+                    screen.blit(
+                        gen_label,
+                        (center_x - gen_label.get_width() // 2, spinner_y + 30),
+                    )
+
+                # Error message
+                if error_message:
+                    error_surface = label_font.render(
+                        error_message, True, (255, 100, 100)
+                    )
+                    screen.blit(
+                        error_surface,
+                        (
+                            center_x - error_surface.get_width() // 2,
+                            button_y + button_height + 20,
                         ),
                     )
 
@@ -301,8 +667,30 @@ async def run_loop(
 
             if pause.is_set():
                 pause.clear()
-                if not await show_pause_menu():
+                result = await show_pause_menu()
+
+                if result.action == "quit":
                     return
+
+                if result.action == "regenerate":
+                    prompt = result.new_prompt  # Update prompt
+                    # Invalidate cached prompt surfaces
+                    cached_prompt_surface = None
+                    cached_prompt_shadow = None
+                    cached_window_width = None
+
+                    if result.reset_with_seed:
+                        # Reset engine with new T2I seed
+                        reset_time = time.time()
+                        await asyncio.to_thread(engine.reset)
+                        seed_frame = result.regenerated_frame
+                        await asyncio.to_thread(engine.append_frame, seed_frame)
+                        frames = 0
+                    else:
+                        # Append I2I regenerated frame and continue
+                        await asyncio.to_thread(engine.append_frame, result.regenerated_frame)
+                        last_frame = result.regenerated_frame
+
                 pygame.event.set_grab(True)
                 pygame.mouse.set_visible(False)
                 pygame.mouse.get_rel()  # discard accumulated mouse movement
