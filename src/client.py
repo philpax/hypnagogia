@@ -6,7 +6,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 import pygame
 import torch
@@ -74,6 +74,7 @@ async def ctrl_stream(
     restart_event: asyncio.Event,
     pause_event: asyncio.Event,
     mouse_sensitivity: float,
+    on_scroll: Callable[[int], None] | None = None,
     whitelisted_keys=None,
 ) -> AsyncIterator[CtrlInput]:
     whitelisted_keys = WHITELIST_KEYS if whitelisted_keys is None else whitelisted_keys
@@ -117,6 +118,9 @@ async def ctrl_stream(
                 c = codes.get(("m", e.button))
                 if c is not None:
                     btn.add(c)
+
+            elif e.type == pygame.MOUSEWHEEL and on_scroll is not None:
+                on_scroll(e.y)  # e.y is positive for scroll up, negative for down
 
         btn.update(held)
 
@@ -166,11 +170,6 @@ async def run_loop(
 
         restart = asyncio.Event()
         pause = asyncio.Event()
-        ctrls = ctrl_stream(
-            restart_event=restart,
-            pause_event=pause,
-            mouse_sensitivity=mouse_sensitivity,
-        )
         limit = max(1, n_frames - 2)
 
         async def reset(*, reload_seed: bool = False) -> None:
@@ -195,6 +194,19 @@ async def run_loop(
         lmb_was_pressed: bool = False
         reset_time: float = time.time()
         current_denoise: float = config.i2i.denoise  # Track current denoise value
+
+        def handle_scroll(y: int) -> None:
+            nonlocal current_denoise
+            # y > 0 means scroll up (increase), y < 0 means scroll down (decrease)
+            current_denoise = max(0.0, min(1.0, current_denoise + y * 0.05))
+
+        ctrls = ctrl_stream(
+            restart_event=restart,
+            pause_event=pause,
+            mouse_sensitivity=mouse_sensitivity,
+            on_scroll=handle_scroll,
+        )
+
         prompt_font_size: int | None = None
         cached_prompt_surface: pygame.Surface | None = None
         cached_prompt_shadow: pygame.Surface | None = None
@@ -256,6 +268,15 @@ async def run_loop(
             timer_x = sw - timer_surface.get_width() - 15
             screen.blit(timer_shadow, (timer_x + 2, 12))
             screen.blit(timer_surface, (timer_x, 10))
+
+            # Draw denoise percentage below timer at top-right
+            denoise_text = f"{int(current_denoise * 100)}%"
+            denoise_font = pygame.font.SysFont("consolas", 28)
+            denoise_surface = denoise_font.render(denoise_text, True, (200, 200, 255))
+            denoise_shadow = denoise_font.render(denoise_text, True, (0, 0, 0))
+            denoise_x = sw - denoise_surface.get_width() - 15
+            screen.blit(denoise_shadow, (denoise_x + 2, 48))
+            screen.blit(denoise_surface, (denoise_x, 46))
 
             # Draw "ANALYZING..." indicator when vision is processing
             if vision_future is not None:
