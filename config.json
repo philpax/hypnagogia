@@ -5,7 +5,7 @@
   },
   "defaults": {
     "n_frames": 4096,
-    "i2i_interval": 120,
+    "i2i_interval": 0,
     "device": "cuda",
     "mouse_sensitivity": 1.5
   },
@@ -26,5 +26,12 @@
     "sampler": "euler_ancestral",
     "steps": 1,
     "denoise": 0.4
+  },
+  "vision": {
+    "api_url": "https://api.openai.com/v1",
+    "model": "gpt-4o",
+    "api_key_env": "",
+    "max_tokens": 150,
+    "timeout": 30.0
   }
 }

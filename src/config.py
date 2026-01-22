@@ -45,12 +45,22 @@ class I2IConfig:
 
 
 @dataclass
+class VisionConfig:
+    api_url: str
+    model: str
+    api_key_env: str
+    max_tokens: int
+    timeout: float
+
+
+@dataclass
 class Config:
     window: WindowConfig
     defaults: DefaultsConfig
     models: ModelsConfig
     t2i: T2IConfig
     i2i: I2IConfig
+    vision: VisionConfig
 
 
 def load_config() -> Config:
@@ -75,6 +85,7 @@ def load_config() -> Config:
         models=ModelsConfig(**data["models"]),
         t2i=T2IConfig(**data["t2i"]),
         i2i=I2IConfig(**data["i2i"]),
+        vision=VisionConfig(**data["vision"]),
     )
 
 

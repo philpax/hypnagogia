@@ -14,6 +14,7 @@ from world_engine import CtrlInput, WorldEngine
 
 from config import get_config
 from seed_gen import generate_i2i, generate_t2i
+from vision_api import VisionResult, describe_frame
 
 # Prefix to strip from prompts when displaying
 PROMPT_PREFIX = "First-person view, "
@@ -43,6 +44,9 @@ class PauseMenuResult:
 
 # Separate executor for i2i so it doesn't block the engine
 _i2i_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="i2i")
+
+# Separate executor for vision API calls
+_vision_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vision")
 
 # pygame keycode -> Windows VK int (main ANSI rows only)
 PYGAME_TO_VK = (
@@ -140,6 +144,8 @@ async def run_loop(
     prompt: str | None = None,
     image_seed: int | None = None,
     i2i_interval: int,
+    vision_api_url: str,
+    vision_model: str,
 ) -> None:
     config = get_config()
     pygame.init()
@@ -178,6 +184,9 @@ async def run_loop(
                 await asyncio.to_thread(engine.append_frame, seed_frame)
 
         i2i_future: Future | None = None
+        vision_future: Future | None = None
+        rmb_was_pressed: bool = False
+        lmb_was_pressed: bool = False
         reset_time: float = time.time()
         current_denoise: float = config.i2i.denoise  # Track current denoise value
         prompt_font_size: int | None = None
@@ -241,6 +250,16 @@ async def run_loop(
             timer_x = sw - timer_surface.get_width() - 15
             screen.blit(timer_shadow, (timer_x + 2, 12))
             screen.blit(timer_surface, (timer_x, 10))
+
+            # Draw "ANALYZING..." indicator when vision is processing
+            if vision_future is not None:
+                indicator_font = pygame.font.SysFont("consolas", 24)
+                text = "ANALYZING..."
+                surf = indicator_font.render(text, True, (255, 200, 100))
+                shadow = indicator_font.render(text, True, (0, 0, 0))
+                x = sw // 2 - surf.get_width() // 2
+                screen.blit(shadow, (x + 2, 12))
+                screen.blit(surf, (x, 10))
 
             pygame.display.flip()
 
@@ -849,6 +868,23 @@ async def run_loop(
                 await asyncio.to_thread(engine.append_frame, refreshed)
                 i2i_future = None
 
+            # Check if vision task completed (non-blocking)
+            if vision_future is not None and vision_future.done():
+                try:
+                    vision_result: VisionResult = vision_future.result()
+                    if vision_result.success:
+                        prompt = vision_result.prompt
+                        # Invalidate cached prompt surfaces
+                        cached_prompt_surface = None
+                        cached_prompt_shadow = None
+                        cached_window_width = None
+                        print(f"Vision: {prompt}")
+                    else:
+                        print(f"Vision error: {vision_result.error}")
+                except Exception as e:
+                    print(f"Vision exception: {e}")
+                vision_future = None
+
             if pause.is_set():
                 pause.clear()
                 result = await show_pause_menu()
@@ -888,7 +924,50 @@ async def run_loop(
                 await reset(reload_seed=False)
                 frames = 0
 
-            img = await asyncio.to_thread(engine.gen_frame, ctrl=ctrl)
+            # RMB edge detection for vision API (before gen_frame)
+            rmb_pressed = 0x02 in ctrl.button
+            if (
+                rmb_pressed
+                and not rmb_was_pressed
+                and vision_future is None
+                and last_frame is not None
+            ):
+                vision_future = _vision_executor.submit(
+                    describe_frame,
+                    last_frame.clone(),
+                    vision_api_url,
+                    vision_model,
+                    config.vision.api_key_env,
+                    config.vision.max_tokens,
+                    config.vision.timeout,
+                )
+            rmb_was_pressed = rmb_pressed
+
+            # LMB edge detection for i2i submission (before gen_frame)
+            lmb_pressed = 0x01 in ctrl.button
+            if (
+                lmb_pressed
+                and not lmb_was_pressed
+                and i2i_future is None
+                and comfyui_url
+                and prompt
+                and last_frame is not None
+            ):
+                i2i_future = _i2i_executor.submit(
+                    generate_i2i,
+                    comfyui_url,
+                    prompt,
+                    last_frame,
+                    None,
+                    current_denoise,
+                )
+            lmb_was_pressed = lmb_pressed
+
+            # Filter out LMB and RMB from ctrl before sending to world model
+            filtered_buttons = ctrl.button - {0x01, 0x02}
+            filtered_ctrl = CtrlInput(button=filtered_buttons, mouse=ctrl.mouse)
+
+            img = await asyncio.to_thread(engine.gen_frame, ctrl=filtered_ctrl)
             frames += 1
             last_frame = img
             draw(img)
@@ -921,6 +1000,8 @@ async def main(
     device: str,
     i2i_interval: int,
     mouse_sensitivity: float,
+    vision_api_url: str,
+    vision_model: str,
 ) -> None:
     config = get_config()
     asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
@@ -948,6 +1029,8 @@ async def main(
         prompt=prompt,
         image_seed=image_seed,
         i2i_interval=i2i_interval,
+        vision_api_url=vision_api_url,
+        vision_model=vision_model,
     )
 
 
@@ -995,6 +1078,16 @@ def cli() -> None:
         default=config.defaults.mouse_sensitivity,
         help=f"Mouse sensitivity (default: {config.defaults.mouse_sensitivity})",
     )
+    parser.add_argument(
+        "--vision-api-url",
+        default=config.vision.api_url,
+        help=f"Vision API URL (default: {config.vision.api_url})",
+    )
+    parser.add_argument(
+        "--vision-model",
+        default=config.vision.model,
+        help=f"Vision model name (default: {config.vision.model})",
+    )
     args = parser.parse_args()
 
     # Pick random prompt from prompts.txt if not specified
@@ -1016,6 +1109,8 @@ def cli() -> None:
             device=args.device,
             i2i_interval=args.i2i_interval,
             mouse_sensitivity=args.mouse_sensitivity,
+            vision_api_url=args.vision_api_url,
+            vision_model=args.vision_model,
         )
     )
 
