@@ -7,8 +7,7 @@ import pygame
 import torch
 from world_engine import CtrlInput, WorldEngine
 
-from seed_gen import generate_seed_image
-
+from seed_gen import generate_i2i, generate_t2i
 
 # pygame keycode -> Windows VK int (main ANSI rows only)
 PYGAME_TO_VK = (
@@ -105,6 +104,7 @@ async def run_loop(
     comfyui_url: str | None = None,
     prompt: str | None = None,
     image_seed: int | None = None,
+    i2i_interval: int = 120,
 ) -> None:
     pygame.init()
     screen = pygame.display.set_mode((1920, 1080), pygame.RESIZABLE)
@@ -128,12 +128,22 @@ async def run_loop(
             if reload_seed or seed_frame is None:
                 if comfyui_url and prompt:
                     seed_frame = await asyncio.to_thread(
-                        generate_seed_image, comfyui_url, prompt, image_seed
+                        generate_t2i, comfyui_url, prompt, image_seed
                     )
                 else:
-                    raise ValueError("ComfyUI URL and prompt are required for seed generation")
+                    raise ValueError(
+                        "ComfyUI URL and prompt are required for seed generation"
+                    )
             if seed_frame is not None:
                 await asyncio.to_thread(engine.append_frame, seed_frame)
+
+        async def regenerate_with_i2i(current_frame: torch.Tensor) -> None:
+            """Regenerate current frame using i2i and feed back into engine."""
+            if comfyui_url and prompt:
+                refreshed = await asyncio.to_thread(
+                    generate_i2i, comfyui_url, prompt, current_frame
+                )
+                await asyncio.to_thread(engine.append_frame, refreshed)
 
         def draw(img: torch.Tensor) -> None:
             img = img.detach()
@@ -190,13 +200,33 @@ async def run_loop(
                 # Draw buttons
                 mouse_pos = pygame.mouse.get_pos()
                 for rect, text in [(resume_rect, "Resume"), (quit_rect, "Quit")]:
-                    color = (100, 100, 100, 200) if rect.collidepoint(mouse_pos) else (60, 60, 60, 200)
-                    btn_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-                    pygame.draw.rect(btn_surf, color, btn_surf.get_rect(), border_radius=8)
-                    pygame.draw.rect(btn_surf, (255, 255, 255), btn_surf.get_rect(), 2, border_radius=8)
+                    color = (
+                        (100, 100, 100, 200)
+                        if rect.collidepoint(mouse_pos)
+                        else (60, 60, 60, 200)
+                    )
+                    btn_surf = pygame.Surface(
+                        (rect.width, rect.height), pygame.SRCALPHA
+                    )
+                    pygame.draw.rect(
+                        btn_surf, color, btn_surf.get_rect(), border_radius=8
+                    )
+                    pygame.draw.rect(
+                        btn_surf,
+                        (255, 255, 255),
+                        btn_surf.get_rect(),
+                        2,
+                        border_radius=8,
+                    )
                     screen.blit(btn_surf, rect.topleft)
                     label = small_font.render(text, True, (255, 255, 255))
-                    screen.blit(label, (rect.centerx - label.get_width() // 2, rect.centery - label.get_height() // 2))
+                    screen.blit(
+                        label,
+                        (
+                            rect.centerx - label.get_width() // 2,
+                            rect.centery - label.get_height() // 2,
+                        ),
+                    )
 
                 pygame.display.flip()
                 await asyncio.sleep(1 / 60)
@@ -204,6 +234,7 @@ async def run_loop(
         await reset(reload_seed=True)
 
         frames = 0
+        last_frame: torch.Tensor | None = None
         async for ctrl in ctrls:
             if pause.is_set():
                 pause.clear()
@@ -221,7 +252,12 @@ async def run_loop(
 
             img = await asyncio.to_thread(engine.gen_frame, ctrl=ctrl)
             frames += 1
+            last_frame = img
             draw(img)
+
+            # Run i2i regeneration every i2i_interval frames
+            if i2i_interval > 0 and frames > 0 and frames % i2i_interval == 0:
+                await regenerate_with_i2i(last_frame)
 
             await asyncio.sleep(0)
     finally:
@@ -236,6 +272,7 @@ async def main(
     image_seed: int | None = None,
     n_frames: int = 4096,
     device: str = "cuda",
+    i2i_interval: int = 120,
 ) -> None:
     asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
 
@@ -261,11 +298,14 @@ async def main(
         comfyui_url=comfyui_url,
         prompt=prompt,
         image_seed=image_seed,
+        i2i_interval=i2i_interval,
     )
 
 
 def cli() -> None:
-    parser = argparse.ArgumentParser(description="Local World client with ComfyUI seed generation")
+    parser = argparse.ArgumentParser(
+        description="Local World client with ComfyUI seed generation"
+    )
     parser.add_argument(
         "--url",
         required=True,
@@ -289,19 +329,28 @@ def cli() -> None:
         help="Number of frames (default: 4096)",
     )
     parser.add_argument(
+        "--i2i-interval",
+        type=int,
+        default=120,
+        help="Frames between i2i regeneration (default: 120, 0 to disable)",
+    )
+    parser.add_argument(
         "--device",
         default="cuda",
         help="Device to use (default: cuda)",
     )
     args = parser.parse_args()
 
-    asyncio.run(main(
-        comfyui_url=args.url,
-        prompt=args.prompt,
-        image_seed=args.seed,
-        n_frames=args.n_frames,
-        device=args.device,
-    ))
+    asyncio.run(
+        main(
+            comfyui_url=args.url,
+            prompt=args.prompt,
+            image_seed=args.seed,
+            n_frames=args.n_frames,
+            device=args.device,
+            i2i_interval=args.i2i_interval,
+        )
+    )
 
 
 if __name__ == "__main__":
