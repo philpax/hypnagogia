@@ -1,8 +1,15 @@
 # Hypnagogia
 
-A fork of [Overworld's local gameplay client](https://github.com/Overworldai/local_world) with ComfyUI integration.
+An interactive dream machine, forked from [Overworld's local gameplay client](https://github.com/Overworldai/local_world), with ComfyUI integration.
 
-The first frame is generated using text-to-image (currently Z Image Turbo). The most recent frame is periodically repainted with image-to-image (currently SDXL Turbo); the result is then injected back into the model to partially restabilise the dream, simultaneously converting local hallucinations to global hallucinations in the process.
+The first frame is generated using text-to-image (Z Image Turbo). You can then explore the dream world using WASD + mouse, with control over its direction:
+
+- **Left-click** regenerates the current frame using image-to-image (SDXL Turbo) and injects the result back into the world model, partially restabilising the dream while converting local hallucinations into global ones
+- **Right-click** analyses the current frame with a vision language model (e.g. GPT-4o) to generate a new prompt based on what it sees, letting the dream evolve organically
+- **Scroll wheel** adjusts the denoise strength for I2I regeneration (0-100%)
+- **ESC** opens a pause menu for editing the prompt, selecting from presets, or adjusting settings
+
+Periodic automatic repainting is supported via the `--i2i-interval` flag, but is off by default.
 
 ## Requirements
 
@@ -17,11 +24,41 @@ For the generations:
 - ComfyUI (on another GPU/machine; running both models on the same GPU will likely make you very sad)
 - Hardware capable of generating SDXL Turbo outputs in <100ms (faster the better)
 
-## Settings
+For vision analysis (optional):
 
-Update `config.json` as appropriate. Note that the ComfyUI workflows are specialised to these two models, so it's unlikely changing them will work out of the box.
+- OpenAI API key (or compatible vision API endpoint)
 
-Overrides can be provided for some of the settings in the CLI arguments:
+## Configuration
+
+Update `config.json` as appropriate. The ComfyUI workflows are specialised to the default models, so changing them is unlikely to work out of the box.
+
+### CLI Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--url` | (required) | ComfyUI server URL |
+| `--prompt` | random from prompts.txt | Initial text prompt |
+| `--seed` | random | Seed for reproducible generation |
+| `--n-frames` | 4096 | Frame buffer size before auto-reset |
+| `--i2i-interval` | 0 (disabled) | Frames between automatic I2I regenerations |
+| `--device` | cuda | PyTorch device |
+| `--mouse-sensitivity` | 1.5 | Mouse control multiplier |
+| `--vision-api-url` | https://api.openai.com/v1 | Vision API base URL |
+| `--vision-model` | gpt-4o | Vision model name |
+
+### Example
+
 ```
-uv run src/client.py --url http://comfyui:8188 --prompt "First-person view, sun-drenched rocky desert path winding through jagged cliffs, warm golden light casting long shadows, distant mesas under a hazy blue sky, sharp stable framing"
+uv run src/client.py --url http://comfyui:8188 --vision-api-url http://vlm-server:7070/v1 --vision-model gpu:qwen3-vl-30b-a3b-instruct
 ```
+
+## Controls
+
+| Input | Action |
+|-------|--------|
+| WASD + Mouse | Navigate the dream world |
+| Left-click | Regenerate frame with I2I and inject |
+| Right-click | Analyse frame with VLM for new prompt |
+| Scroll wheel | Adjust denoise strength |
+| ESC | Open pause menu |
+| U | Manual reset |
