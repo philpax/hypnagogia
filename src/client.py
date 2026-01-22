@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import math
+import random
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -962,8 +963,8 @@ def cli() -> None:
     )
     parser.add_argument(
         "--prompt",
-        required=True,
-        help="Text prompt for seed image generation",
+        default=None,
+        help="Text prompt for seed image generation (default: random from prompts.txt)",
     )
     parser.add_argument(
         "--seed",
@@ -996,10 +997,20 @@ def cli() -> None:
     )
     args = parser.parse_args()
 
+    # Pick random prompt from prompts.txt if not specified
+    prompt = args.prompt
+    if prompt is None:
+        prompts = load_prompts()
+        if prompts:
+            prompt = random.choice(prompts)
+            print(f"Using random prompt: {prompt}")
+        else:
+            parser.error("--prompt is required (no prompts.txt found)")
+
     asyncio.run(
         main(
             comfyui_url=args.url,
-            prompt=args.prompt,
+            prompt=prompt,
             image_seed=args.seed,
             n_frames=args.n_frames,
             device=args.device,
