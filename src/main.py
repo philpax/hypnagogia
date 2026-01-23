@@ -22,6 +22,8 @@ async def main(
     n_frames: int,
     device: str,
     i2i_interval: int,
+    i2i_vlm_regen: bool,
+    denoise: float,
     mouse_sensitivity: float,
     vision_api_url: str,
     vision_model: str,
@@ -53,6 +55,8 @@ async def main(
         prompt=prompt,
         image_seed=image_seed,
         i2i_interval=i2i_interval,
+        i2i_vlm_regen=i2i_vlm_regen,
+        denoise=denoise,
         vision_api_url=vision_api_url,
         vision_model=vision_model,
     )
@@ -93,6 +97,18 @@ def cli() -> None:
         help=f"Frames between i2i regeneration (default: {config.defaults.i2i_interval}, 0 to disable)",
     )
     _ = parser.add_argument(
+        "--i2i-vlm-regen",
+        action="store_true",
+        default=config.defaults.i2i_vlm_regen,
+        help="Use VLM to generate new prompt before i2i regeneration (requires --i2i-interval)",
+    )
+    _ = parser.add_argument(
+        "--denoise",
+        type=float,
+        default=config.i2i.denoise,
+        help=f"Denoising factor for i2i regeneration (default: {config.i2i.denoise})",
+    )
+    _ = parser.add_argument(
         "--device",
         default=config.defaults.device,
         help=f"Device to use (default: {config.defaults.device})",
@@ -130,6 +146,8 @@ def cli() -> None:
     n_frames: int = args.n_frames  # pyright: ignore[reportAny]
     device: str = args.device  # pyright: ignore[reportAny]
     i2i_interval: int = args.i2i_interval  # pyright: ignore[reportAny]
+    i2i_vlm_regen: bool = args.i2i_vlm_regen  # pyright: ignore[reportAny]
+    denoise: float = args.denoise  # pyright: ignore[reportAny]
     mouse_sensitivity: float = args.mouse_sensitivity  # pyright: ignore[reportAny]
     vision_api_url: str = args.vision_api_url  # pyright: ignore[reportAny]
     vision_model: str = args.vision_model  # pyright: ignore[reportAny]
@@ -142,6 +160,8 @@ def cli() -> None:
             n_frames=n_frames,
             device=device,
             i2i_interval=i2i_interval,
+            i2i_vlm_regen=i2i_vlm_regen,
+            denoise=denoise,
             mouse_sensitivity=mouse_sensitivity,
             vision_api_url=vision_api_url,
             vision_model=vision_model,

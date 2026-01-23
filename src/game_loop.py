@@ -34,6 +34,8 @@ async def run_loop(
     prompt: str | None = None,
     image_seed: int | None = None,
     i2i_interval: int,
+    i2i_vlm_regen: bool,
+    denoise: float,
     vision_api_url: str,
     vision_model: str,
 ) -> None:
@@ -61,7 +63,7 @@ async def run_loop(
         rmb_sound=rmb_sound,
         seed_frame=seed_frame,
         prompt=prompt,
-        current_denoise=config.i2i.denoise,
+        current_denoise=denoise,
     )
 
     try:
@@ -75,7 +77,9 @@ async def run_loop(
         async def reset(*, reload_seed: bool = False) -> None:
             state.play_time = 0.0
             if state.play_start is not None:
-                state.play_start = time.time()  # Restart play timer if currently playing
+                state.play_start = (
+                    time.time()
+                )  # Restart play timer if currently playing
             await asyncio.to_thread(engine.reset)
             if reload_seed or state.seed_frame is None:
                 if comfyui_url and state.prompt:
@@ -178,6 +182,39 @@ async def run_loop(
                 except Exception as e:
                     print(f"Vision exception: {e}")
                 state.vision_future = None
+
+            # Check if VLM-i2i vision task completed (non-blocking)
+            if (
+                state.vlm_i2i_vision_future is not None
+                and state.vlm_i2i_vision_future.done()
+            ):
+                try:
+                    vlm_i2i_result: VisionResult = state.vlm_i2i_vision_future.result()
+                    if vlm_i2i_result.success:
+                        state.prompt = vlm_i2i_result.prompt
+                        state.invalidate_prompt_cache()
+                        print(f"VLM-i2i: {state.prompt}")
+                        # Now trigger i2i with the new prompt and current frame
+                        if (
+                            state.i2i_future is None
+                            and comfyui_url
+                            and state.prompt
+                            and state.last_frame is not None  # pyright: ignore[reportUnknownMemberType]
+                        ):
+                            state.i2i_pending_prompt = state.prompt
+                            state.i2i_future = i2i_executor.submit(
+                                generate_i2i,
+                                comfyui_url,
+                                state.prompt,
+                                state.last_frame,
+                                None,
+                                state.current_denoise,
+                            )
+                    else:
+                        print(f"VLM-i2i error: {vlm_i2i_result.error}")
+                except Exception as e:
+                    print(f"VLM-i2i exception: {e}")
+                state.vlm_i2i_vision_future = None
 
             if pause.is_set():
                 pause.clear()
@@ -307,19 +344,35 @@ async def run_loop(
                 i2i_interval > 0
                 and state.frames > 0
                 and state.frames % i2i_interval == 0
-                and state.i2i_future is None
                 and comfyui_url
                 and state.prompt
             ):
-                state.i2i_pending_prompt = state.prompt  # Track prompt for history
-                state.i2i_future = i2i_executor.submit(
-                    generate_i2i,
-                    comfyui_url,
-                    state.prompt,
-                    state.last_frame,
-                    None,
-                    state.current_denoise,
-                )
+                if i2i_vlm_regen:
+                    # VLM-triggered: first get new prompt from VLM, then i2i
+                    if (
+                        state.vlm_i2i_vision_future is None
+                        and state.last_frame is not None  # pyright: ignore[reportUnknownMemberType]
+                    ):
+                        state.vlm_i2i_vision_future = vision_executor.submit(
+                            describe_frame,
+                            state.last_frame.clone(),
+                            vision_api_url,
+                            vision_model,
+                            config.vision.api_key_env,
+                            config.vision.max_tokens,
+                            config.vision.timeout,
+                        )
+                elif state.i2i_future is None:
+                    # Direct i2i without VLM
+                    state.i2i_pending_prompt = state.prompt  # Track prompt for history
+                    state.i2i_future = i2i_executor.submit(
+                        generate_i2i,
+                        comfyui_url,
+                        state.prompt,
+                        state.last_frame,
+                        None,
+                        state.current_denoise,
+                    )
 
             await asyncio.sleep(0)
     finally:

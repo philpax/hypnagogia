@@ -15,6 +15,7 @@ class WindowConfigDict(TypedDict):
 class DefaultsConfigDict(TypedDict):
     n_frames: int
     i2i_interval: int
+    i2i_vlm_regen: bool
     device: str
     mouse_sensitivity: float
 
@@ -67,6 +68,7 @@ class WindowConfig:
 class DefaultsConfig:
     n_frames: int
     i2i_interval: int
+    i2i_vlm_regen: bool
     device: str
     mouse_sensitivity: float
 

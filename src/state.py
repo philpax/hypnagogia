@@ -38,7 +38,9 @@ class ClientState:
     prompt: str | None = None
     current_denoise: float = 0.5
     play_time: float = 0.0  # Accumulated active play time
-    play_start: float | None = None  # When current play session started (None when paused)
+    play_start: float | None = (
+        None  # When current play session started (None when paused)
+    )
     frames: int = 0
     last_frame: torch.Tensor | None = None
 
@@ -53,6 +55,9 @@ class ClientState:
     i2i_future: Future[torch.Tensor] | None = None
     i2i_pending_prompt: str | None = None
     vision_future: "Future[VisionResult] | None" = None
+
+    # VLM-triggered i2i regeneration (separate from manual RMB vision)
+    vlm_i2i_vision_future: "Future[VisionResult] | None" = None
 
     # Mouse button state for edge detection
     lmb_was_pressed: bool = False

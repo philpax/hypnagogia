@@ -6,6 +6,7 @@
   "defaults": {
     "n_frames": 4096,
     "i2i_interval": 0,
+    "i2i_vlm_regen": false,
     "device": "cuda",
     "mouse_sensitivity": 1.5
   },
