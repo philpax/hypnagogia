@@ -1,0 +1,1 @@
+- Use `uvx ruff check` and `uvx ruff format`.
