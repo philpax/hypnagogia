@@ -13,15 +13,16 @@ VISION_SYSTEM_PROMPT = """You are a scene descriptor. Analyze the image and desc
 
 Format rules:
 - Start with "First-person view, "
+- Identify the art style (e.g. oil painting, watercolour, pixel art, cel-shaded, photorealistic, impressionist, surrealist, art nouveau, cyberpunk, vaporwave)
 - Describe the landscape, time of day, and atmosphere
 - End with "sharp stable framing"
 - Keep under 50 words total
 - No text, brands, people, or body parts in descriptions
 
 Examples:
-- First-person view, misty marsh landscape at dawn, thatched cottages rising from reeds, golden light filtering through fog, symbolic village with winding paths, sharp stable framing
-- First-person view, vast savannah under starry night sky, dramatic castle silhouette in distance, vibrant turquoise palette, soft glowing haze, sharp stable framing
-- First-person view, ancient redwood forest at twilight, towering moss-covered trunks, soft golden rays piercing through canopy, ferns carpeting the forest floor, mystical atmosphere, sharp stable framing"""
+- First-person view, impressionist oil painting style, misty marsh landscape at dawn, thatched cottages rising from reeds, golden light filtering through fog, soft visible brushstrokes, sharp stable framing
+- First-person view, vaporwave aesthetic, vast neon-lit cityscape under starry night sky, dramatic skyscraper silhouettes, vibrant turquoise and magenta palette, soft glowing haze, sharp stable framing
+- First-person view, Studio Ghibli style, ancient redwood forest at twilight, towering moss-covered trunks, soft golden rays piercing through canopy, whimsical atmosphere, sharp stable framing"""
 
 
 @dataclass
