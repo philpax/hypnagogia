@@ -161,8 +161,11 @@ def draw(img: torch.Tensor, state: ClientState) -> None:
             (10, sh - state.cached_prompt_surface.get_height() - 10),
         )
 
-    # Draw timer at top-right (stylized)
-    elapsed = time.time() - state.reset_time
+    # Draw timer at top-right (stylized, only counting active play time)
+    if state.play_start is not None:
+        elapsed = state.play_time + (time.time() - state.play_start)
+    else:
+        elapsed = state.play_time
     timer_text = f"{elapsed:.1f}s"
     timer_font = pygame.font.SysFont("consolas", 36)
     timer_surface = timer_font.render(timer_text, True, (255, 255, 255))

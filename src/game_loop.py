@@ -21,7 +21,7 @@ from constants import (
 from input import ctrl_stream
 from pause_menu import show_pause_menu
 from rendering import draw
-from state import ClientState
+from state import ClientState, GameState
 
 
 async def run_loop(
@@ -62,18 +62,20 @@ async def run_loop(
         seed_frame=seed_frame,
         prompt=prompt,
         current_denoise=config.i2i.denoise,
-        reset_time=time.time(),
     )
 
     try:
-        pygame.event.set_grab(True)
+        # Apply initial game state (PAUSED - cursor visible, not grabbed)
+        state.apply_game_state()
 
         restart = asyncio.Event()
         pause = asyncio.Event()
         limit = max(1, n_frames - 2)
 
         async def reset(*, reload_seed: bool = False) -> None:
-            state.reset_time = time.time()
+            state.play_time = 0.0
+            if state.play_start is not None:
+                state.play_start = time.time()  # Restart play timer if currently playing
             await asyncio.to_thread(engine.reset)
             if reload_seed or state.seed_frame is None:
                 if comfyui_url and state.prompt:
@@ -110,16 +112,6 @@ async def run_loop(
                     0.0, min(1.0, state.current_denoise + y * 0.05)
                 )
 
-        def handle_browse_change(is_browsing: bool) -> None:
-            """Handle entering/exiting history browse mode (Q key)."""
-            if is_browsing:
-                pygame.event.set_grab(False)
-                _ = pygame.mouse.set_visible(True)
-            else:
-                pygame.event.set_grab(True)
-                _ = pygame.mouse.set_visible(False)
-                _ = pygame.mouse.get_rel()  # Discard accumulated mouse movement
-
         def handle_history_click(pos: tuple[int, int]) -> None:
             """Handle clicking on a history item to set its prompt."""
             if not state.image_history:
@@ -148,14 +140,15 @@ async def run_loop(
             restart_event=restart,
             pause_event=pause,
             mouse_sensitivity=mouse_sensitivity,
+            state=state,
             on_scroll=handle_scroll,
-            on_browse_change=handle_browse_change,
             on_history_click=handle_history_click,
         )
 
         await reset(reload_seed=True)
 
         state.frames = 0
+        initial_pause_done = False
         async for ctrl in ctrls:
             # Check if i2i task completed (non-blocking)
             if state.i2i_future is not None and state.i2i_future.done():
@@ -208,7 +201,7 @@ async def run_loop(
 
                     if result.reset_with_seed:
                         # Reset engine with new T2I seed
-                        state.reset_time = time.time()
+                        state.play_time = 0.0
                         await asyncio.to_thread(engine.reset)
                         state.seed_frame = result.regenerated_frame
                         _ = await asyncio.to_thread(
@@ -239,8 +232,10 @@ async def run_loop(
                             ),
                         )
 
-                pygame.event.set_grab(True)
-                _ = pygame.mouse.set_visible(False)
+                # Start play timer when resuming
+                state.play_start = time.time()
+                state.game_state = GameState.PLAYING
+                state.apply_game_state()
                 _ = pygame.mouse.get_rel()  # discard accumulated mouse movement
                 continue
 
@@ -301,6 +296,11 @@ async def run_loop(
             state.frames += 1
             state.last_frame = img
             draw(img, state)  # pyright: ignore[reportUnknownArgumentType]
+
+            # Pause after first frame so engine is warm before showing pause menu
+            if state.frames == 1 and not initial_pause_done:
+                initial_pause_done = True
+                pause.set()
 
             # Start i2i regeneration every i2i_interval frames (if not already running)
             if (
