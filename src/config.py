@@ -4,6 +4,57 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict, cast
+
+
+class WindowConfigDict(TypedDict):
+    width: int
+    height: int
+
+
+class DefaultsConfigDict(TypedDict):
+    n_frames: int
+    i2i_interval: int
+    device: str
+    mouse_sensitivity: float
+
+
+class ModelsConfigDict(TypedDict):
+    world_engine: str
+    vae_uri: str
+
+
+class T2IConfigDict(TypedDict):
+    clip: str
+    vae: str
+    unet: str
+    sampler: str
+    steps: int
+    cfg: int
+
+
+class I2IConfigDict(TypedDict):
+    checkpoint: str
+    sampler: str
+    steps: int
+    denoise: float
+
+
+class VisionConfigDict(TypedDict):
+    api_url: str
+    model: str
+    api_key_env: str
+    max_tokens: int
+    timeout: float
+
+
+class ConfigDict(TypedDict):
+    window: WindowConfigDict
+    defaults: DefaultsConfigDict
+    models: ModelsConfigDict
+    t2i: T2IConfigDict
+    i2i: I2IConfigDict
+    vision: VisionConfigDict
 
 
 @dataclass
@@ -74,7 +125,7 @@ def load_config() -> Config:
 
     try:
         with open(config_path) as f:
-            data = json.load(f)
+            data = cast(ConfigDict, json.load(f))
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON in config.json: {e}", file=sys.stderr)
         sys.exit(1)

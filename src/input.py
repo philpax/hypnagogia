@@ -1,8 +1,7 @@
 """Input handling for the client."""
 
 import asyncio
-from collections.abc import Callable
-from typing import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import pygame
 from world_engine import CtrlInput
@@ -44,43 +43,43 @@ async def ctrl_stream(
                 return
 
             if e.type == pygame.KEYDOWN:
-                if e.key == pygame.K_ESCAPE:
+                if e.key == pygame.K_ESCAPE:  # pyright: ignore[reportAny]
                     pause_event.set()
-                elif e.key == pygame.K_u:
+                elif e.key == pygame.K_u:  # pyright: ignore[reportAny]
                     restart_event.set()
-                elif e.key == HISTORY_BROWSE_KEY:
+                elif e.key == HISTORY_BROWSE_KEY:  # pyright: ignore[reportAny]
                     browsing = True
                     if on_browse_change:
                         on_browse_change(True)
                     continue  # Don't forward Q to game
 
-                c = codes.get(("k", e.key))
+                c = codes.get(("k", e.key))  # pyright: ignore[reportAny]
                 if c is not None:
                     btn.add(c)
                     held.add(c)
 
             elif e.type == pygame.KEYUP:
-                if e.key == HISTORY_BROWSE_KEY:
+                if e.key == HISTORY_BROWSE_KEY:  # pyright: ignore[reportAny]
                     browsing = False
                     if on_browse_change:
                         on_browse_change(False)
                     continue  # Don't forward Q to game
 
-                c = codes.get(("k", e.key))
+                c = codes.get(("k", e.key))  # pyright: ignore[reportAny]
                 if c is not None:
                     held.discard(c)
 
             elif e.type == pygame.MOUSEBUTTONDOWN:
                 # When browsing, LMB clicks go to history instead of game
-                if browsing and e.button == 1 and on_history_click:
-                    on_history_click(e.pos)
+                if browsing and e.button == 1 and on_history_click:  # pyright: ignore[reportAny]
+                    on_history_click(e.pos)  # pyright: ignore[reportAny]
                 else:
                     c = codes.get(("m", e.button))
                     if c is not None:
                         btn.add(c)
 
             elif e.type == pygame.MOUSEWHEEL and on_scroll is not None:
-                on_scroll(e.y)  # e.y is positive for scroll up, negative for down
+                on_scroll(e.y)  # pyright: ignore[reportAny]
 
         btn.update(held)
 

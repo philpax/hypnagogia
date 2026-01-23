@@ -1,5 +1,7 @@
 """Generate seed images using ComfyScript with the z-image-turbo workflow."""
 
+# pyright: reportUnusedCallResult=none
+
 import random
 
 import numpy as np
@@ -20,7 +22,7 @@ def _ensure_loaded(comfyui_url: str):
     """Load ComfyUI connection once."""
     global _comfy_loaded
     if not _comfy_loaded:
-        from comfy_script.runtime import load
+        from comfy_script.runtime import load  # pyright: ignore[reportUnknownVariableType]
 
         load(comfyui_url)
         _comfy_loaded = True
@@ -28,13 +30,13 @@ def _ensure_loaded(comfyui_url: str):
 
 def _tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
     """Convert (H, W, 3) uint8 tensor to PIL Image."""
-    return Image.fromarray(tensor.cpu().numpy())
+    return Image.fromarray(tensor.cpu().numpy())  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
 
 def _pil_to_tensor(pil_img: Image.Image, target_size: tuple[int, int]) -> torch.Tensor:
     """Convert PIL Image to (H, W, 3) uint8 tensor with resizing."""
     img = (
-        torch.from_numpy(np.array(pil_img.convert("RGB")))
+        torch.from_numpy(np.array(pil_img.convert("RGB")))  # pyright: ignore[reportUnknownMemberType]
         .permute(2, 0, 1)
         .unsqueeze(0)
         .float()
@@ -95,9 +97,11 @@ def generate_t2i(
         )
         image = VAEDecode(samples, vae)
         PreviewImage(image)
-        images = util.get_images(image)
+        images = util.get_images(image)  # pyright: ignore[reportUnknownMemberType]
 
-    return _pil_to_tensor(images[0], target_size)
+    first_image = images[0]
+    assert first_image is not None
+    return _pil_to_tensor(first_image, target_size)
 
 
 def _upload_image(
@@ -132,11 +136,11 @@ def _upload_image(
         method="POST",
     )
 
-    with urllib.request.urlopen(req) as response:
+    with urllib.request.urlopen(req) as response:  # pyright: ignore[reportAny]
         import json
 
-        result = json.loads(response.read())
-        return result.get("name", filename)
+        result = json.loads(response.read())  # pyright: ignore[reportAny]
+        return result.get("name", filename)  # pyright: ignore[reportAny]
 
 
 def generate_i2i(
@@ -196,9 +200,11 @@ def generate_i2i(
         )
         image = VAEDecode(samples, vae)
         PreviewImage(image)
-        images = util.get_images(image)
+        images = util.get_images(image)  # pyright: ignore[reportUnknownMemberType]
 
-    return _pil_to_tensor(images[0], target_size)
+    first_image = images[0]
+    assert first_image is not None
+    return _pil_to_tensor(first_image, target_size)
 
 
 if __name__ == "__main__":
@@ -220,24 +226,30 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    print(f"Connecting to {args.url}...")
-    print(f"Prompt: {args.prompt}")
-    print(f"Seed: {args.seed or 'random'}")
+    url: str = args.url  # pyright: ignore[reportAny]
+    prompt: str = args.prompt  # pyright: ignore[reportAny]
+    seed: int | None = args.seed  # pyright: ignore[reportAny]
+    output: str = args.output  # pyright: ignore[reportAny]
+    test_i2i: bool = args.test_i2i  # pyright: ignore[reportAny]
+
+    print(f"Connecting to {url}...")
+    print(f"Prompt: {prompt}")
+    print(f"Seed: {seed or 'random'}")
 
     print("\n=== Testing t2i ===")
-    tensor = generate_t2i(args.url, args.prompt, args.seed)
+    tensor = generate_t2i(url, prompt, seed)
     print(f"Generated tensor: {tensor.shape}, dtype={tensor.dtype}")
 
-    img = Image.fromarray(tensor.numpy())
-    img.save(args.output)
-    print(f"Saved to {args.output}")
+    img = Image.fromarray(tensor.numpy())  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    img.save(output)
+    print(f"Saved to {output}")
 
-    if args.test_i2i:
+    if test_i2i:
         print("\n=== Testing i2i ===")
-        i2i_output = args.output.replace(".png", "_i2i.png")
-        tensor_i2i = generate_i2i(args.url, args.prompt, tensor, args.seed)
+        i2i_output = output.replace(".png", "_i2i.png")
+        tensor_i2i = generate_i2i(url, prompt, tensor, seed)
         print(f"Generated i2i tensor: {tensor_i2i.shape}, dtype={tensor_i2i.dtype}")
 
-        img_i2i = Image.fromarray(tensor_i2i.numpy())
+        img_i2i = Image.fromarray(tensor_i2i.numpy())  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         img_i2i.save(i2i_output)
         print(f"Saved to {i2i_output}")

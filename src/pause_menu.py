@@ -1,5 +1,7 @@
 """Pause menu implementation."""
 
+# pyright: reportUnusedCallResult=none
+
 import asyncio
 import math
 import time
@@ -10,7 +12,7 @@ import torch
 
 from seed_gen import generate_i2i, generate_t2i
 
-from constants import PROMPT_PREFIX, PauseMenuResult, _i2i_executor, load_prompts
+from constants import PROMPT_PREFIX, PauseMenuResult, i2i_executor, load_prompts
 from state import ClientState
 
 
@@ -23,8 +25,8 @@ async def show_pause_menu(
 ) -> PauseMenuResult:
     """Show pause menu with prompt editing. Returns PauseMenuResult."""
     pygame.event.set_grab(False)
-    pygame.mouse.set_visible(True)
-    pygame.key.set_repeat(400, 50)  # Enable key repeat (400ms delay, 50ms interval)
+    _ = pygame.mouse.set_visible(True)
+    _ = pygame.key.set_repeat(400, 50)  # Enable key repeat (400ms delay, 50ms interval)
 
     # Fonts
     title_font = pygame.font.SysFont(None, 48)
@@ -61,7 +63,7 @@ async def show_pause_menu(
     # Menu state
     MENU, GENERATING = "menu", "generating"
     menu_state = MENU
-    gen_future: Future | None = None
+    gen_future: Future[torch.Tensor] | None = None
     spinner_angle = 0.0
     error_message: str | None = None
     error_time = 0.0
@@ -148,33 +150,33 @@ async def show_pause_menu(
 
             if menu_state == MENU:
                 if e.type == pygame.KEYDOWN:
-                    if e.key == pygame.K_ESCAPE:
+                    if e.key == pygame.K_ESCAPE:  # pyright: ignore[reportAny]
                         pygame.key.set_repeat(0)
                         return PauseMenuResult(action="resume")
 
                     if input_active:
-                        if e.key == pygame.K_BACKSPACE:
+                        if e.key == pygame.K_BACKSPACE:  # pyright: ignore[reportAny]
                             if cursor_pos > 0:
                                 input_text = (
                                     input_text[: cursor_pos - 1]
                                     + input_text[cursor_pos:]
                                 )
                                 cursor_pos -= 1
-                        elif e.key == pygame.K_DELETE:
+                        elif e.key == pygame.K_DELETE:  # pyright: ignore[reportAny]
                             if cursor_pos < len(input_text):
                                 input_text = (
                                     input_text[:cursor_pos]
                                     + input_text[cursor_pos + 1 :]
                                 )
-                        elif e.key == pygame.K_LEFT:
+                        elif e.key == pygame.K_LEFT:  # pyright: ignore[reportAny]
                             cursor_pos = max(0, cursor_pos - 1)
-                        elif e.key == pygame.K_RIGHT:
+                        elif e.key == pygame.K_RIGHT:  # pyright: ignore[reportAny]
                             cursor_pos = min(len(input_text), cursor_pos + 1)
-                        elif e.key == pygame.K_HOME:
+                        elif e.key == pygame.K_HOME:  # pyright: ignore[reportAny]
                             cursor_pos = 0
-                        elif e.key == pygame.K_END:
+                        elif e.key == pygame.K_END:  # pyright: ignore[reportAny]
                             cursor_pos = len(input_text)
-                        elif e.key == pygame.K_v and (e.mod & pygame.KMOD_CTRL):
+                        elif e.key == pygame.K_v and (e.mod & pygame.KMOD_CTRL):  # pyright: ignore[reportAny]
                             try:
                                 clipboard = pygame.scrap.get(pygame.SCRAP_TEXT)
                                 if clipboard:
@@ -189,18 +191,18 @@ async def show_pause_menu(
                                     cursor_pos += len(paste_text)
                             except Exception:
                                 pass
-                        elif e.key == pygame.K_RETURN:
-                            if input_text.strip():
+                        elif e.key == pygame.K_RETURN:  # pyright: ignore[reportAny]
+                            if input_text.strip() and comfyui_url is not None:
                                 menu_state = GENERATING
                                 if reset_checked:
-                                    gen_future = _i2i_executor.submit(
+                                    gen_future = i2i_executor.submit(
                                         generate_t2i,
                                         comfyui_url,
                                         input_text,
                                         image_seed,
                                     )
-                                else:
-                                    gen_future = _i2i_executor.submit(
+                                elif last_frame is not None:
+                                    gen_future = i2i_executor.submit(
                                         generate_i2i,
                                         comfyui_url,
                                         input_text,
@@ -210,27 +212,27 @@ async def show_pause_menu(
                                     )
 
                 if e.type == pygame.TEXTINPUT and input_active:
-                    input_text = (
-                        input_text[:cursor_pos] + e.text + input_text[cursor_pos:]
+                    input_text = (  # pyright: ignore[reportAny]
+                        input_text[:cursor_pos] + e.text + input_text[cursor_pos:]  # pyright: ignore[reportAny]
                     )
-                    cursor_pos += len(e.text)
+                    cursor_pos += len(e.text)  # pyright: ignore[reportAny]
 
-                if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:  # pyright: ignore[reportAny]
                     # Check text input click
-                    if input_rect.collidepoint(e.pos):
+                    if input_rect.collidepoint(e.pos):  # pyright: ignore[reportAny]
                         input_active = True
-                        rel_x = e.pos[0] - input_rect.x - input_padding
+                        rel_x: int = e.pos[0] - input_rect.x - input_padding  # pyright: ignore[reportAny]
                         click_char = scroll_offset + int(rel_x / char_width)
                         cursor_pos = max(0, min(len(input_text), click_char))
                     else:
                         input_active = False
 
                     # Check prompts list click
-                    if prompts_rect.collidepoint(e.pos) and prompts_list:
-                        rel_y = e.pos[1] - prompts_rect.y
-                        clicked_idx = prompts_scroll + rel_y // prompts_item_height
+                    if prompts_rect.collidepoint(e.pos) and prompts_list:  # pyright: ignore[reportAny]
+                        rel_y: int = e.pos[1] - prompts_rect.y  # pyright: ignore[reportAny]
+                        clicked_idx: int = prompts_scroll + rel_y // prompts_item_height
                         if 0 <= clicked_idx < len(prompts_list):
-                            selected_prompt = prompts_list[clicked_idx]
+                            selected_prompt: str = prompts_list[clicked_idx]
                             # Strip prefix if present
                             if selected_prompt.startswith(PROMPT_PREFIX):
                                 selected_prompt = selected_prompt[len(PROMPT_PREFIX) :]
@@ -245,41 +247,41 @@ async def show_pause_menu(
                         slider_width + 10,
                         slider_height + 10,
                     )
-                    if slider_hit.collidepoint(e.pos):
+                    if slider_hit.collidepoint(e.pos):  # pyright: ignore[reportAny]
                         slider_dragging = True
-                        rel_x = max(0, min(slider_width, e.pos[0] - slider_rect.x))
+                        rel_x = max(0, min(slider_width, e.pos[0] - slider_rect.x))  # pyright: ignore[reportAny]
                         denoise_value = rel_x / slider_width
 
                     # Check checkbox click
                     checkbox_hit = pygame.Rect(
                         checkbox_rect.x, checkbox_rect.y, 220, checkbox_size
                     )
-                    if checkbox_hit.collidepoint(e.pos):
+                    if checkbox_hit.collidepoint(e.pos):  # pyright: ignore[reportAny]
                         reset_checked = not reset_checked
 
                     # Check button clicks
-                    if resume_rect.collidepoint(e.pos):
+                    if resume_rect.collidepoint(e.pos):  # pyright: ignore[reportAny]
                         pygame.key.set_repeat(0)
                         return PauseMenuResult(action="resume")
-                    if clear_rect.collidepoint(e.pos):
+                    if clear_rect.collidepoint(e.pos):  # pyright: ignore[reportAny]
                         input_text = ""
                         cursor_pos = 0
                         scroll_offset = 0
-                    if quit_rect.collidepoint(e.pos):
+                    if quit_rect.collidepoint(e.pos):  # pyright: ignore[reportAny]
                         pygame.key.set_repeat(0)
                         return PauseMenuResult(action="quit")
-                    if submit_rect.collidepoint(e.pos):
-                        if input_text.strip():
+                    if submit_rect.collidepoint(e.pos):  # pyright: ignore[reportAny]
+                        if input_text.strip() and comfyui_url is not None:
                             menu_state = GENERATING
                             if reset_checked:
-                                gen_future = _i2i_executor.submit(
+                                gen_future = i2i_executor.submit(
                                     generate_t2i,
                                     comfyui_url,
                                     input_text,
                                     image_seed,
                                 )
-                            else:
-                                gen_future = _i2i_executor.submit(
+                            elif last_frame is not None:
+                                gen_future = i2i_executor.submit(
                                     generate_i2i,
                                     comfyui_url,
                                     input_text,
@@ -292,7 +294,7 @@ async def show_pause_menu(
                     slider_dragging = False
 
                 if e.type == pygame.MOUSEMOTION and slider_dragging:
-                    rel_x = max(0, min(slider_width, e.pos[0] - slider_rect.x))
+                    rel_x = max(0, min(slider_width, e.pos[0] - slider_rect.x))  # pyright: ignore[reportAny]
                     denoise_value = rel_x / slider_width
 
                 # Scroll prompts list with mouse wheel
@@ -303,7 +305,7 @@ async def show_pause_menu(
                         0,
                         min(
                             len(prompts_list) - visible_prompts,
-                            prompts_scroll - e.y,
+                            prompts_scroll - e.y,  # pyright: ignore[reportAny]
                         ),
                     )
 

@@ -15,8 +15,8 @@ from vision_api import VisionResult, describe_frame
 from constants import (
     HISTORY_BROWSE_KEY,
     ImageHistoryEntry,
-    _i2i_executor,
-    _vision_executor,
+    i2i_executor,
+    vision_executor,
 )
 from input import ctrl_stream
 from pause_menu import show_pause_menu
@@ -39,8 +39,8 @@ async def run_loop(
 ) -> None:
     """Main game loop that handles rendering, input, and state management."""
     config = get_config()
-    pygame.init()
-    pygame.mixer.init()
+    _ = pygame.init()
+    _ = pygame.mixer.init()
     screen = pygame.display.set_mode(
         (config.window.width, config.window.height), pygame.RESIZABLE
     )
@@ -88,16 +88,17 @@ async def run_loop(
             state.image_history = []
             state.history_cache.clear()
             state.history_scroll = 0
-            if state.seed_frame is not None:
+            # seed_frame is guaranteed non-None here (assigned above or was already set)
+            if state.prompt is not None:
                 state.image_history.insert(
                     0, ImageHistoryEntry(image=state.seed_frame, prompt=state.prompt)
                 )
-                await asyncio.to_thread(engine.append_frame, state.seed_frame)
+                _ = await asyncio.to_thread(engine.append_frame, state.seed_frame)
 
         def handle_scroll(y: int) -> None:
             # Check if mouse is over history area (top-left)
-            mouse_x, mouse_y = pygame.mouse.get_pos()
-            sw, sh = screen.get_size()
+            mouse_x, _ = pygame.mouse.get_pos()
+            sw, _ = screen.get_size()
             history_width = sw // 8  # thumb_width, no padding
             if mouse_x < history_width and state.image_history:
                 # Scroll history (y > 0 = scroll up = decrease offset)
@@ -113,11 +114,11 @@ async def run_loop(
             """Handle entering/exiting history browse mode (Q key)."""
             if is_browsing:
                 pygame.event.set_grab(False)
-                pygame.mouse.set_visible(True)
+                _ = pygame.mouse.set_visible(True)
             else:
                 pygame.event.set_grab(True)
-                pygame.mouse.set_visible(False)
-                pygame.mouse.get_rel()  # Discard accumulated mouse movement
+                _ = pygame.mouse.set_visible(False)
+                _ = pygame.mouse.get_rel()  # Discard accumulated mouse movement
 
         def handle_history_click(pos: tuple[int, int]) -> None:
             """Handle clicking on a history item to set its prompt."""
@@ -159,7 +160,7 @@ async def run_loop(
             # Check if i2i task completed (non-blocking)
             if state.i2i_future is not None and state.i2i_future.done():
                 refreshed = state.i2i_future.result()
-                await asyncio.to_thread(engine.append_frame, refreshed)
+                _ = await asyncio.to_thread(engine.append_frame, refreshed)
                 # Add to image history
                 if state.i2i_pending_prompt:
                     state.image_history.insert(
@@ -188,13 +189,19 @@ async def run_loop(
             if pause.is_set():
                 pause.clear()
                 result = await show_pause_menu(
-                    screen, state, state.last_frame, comfyui_url, image_seed
+                    screen,
+                    state,
+                    state.last_frame,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                    comfyui_url,
+                    image_seed,
                 )
 
                 if result.action == "quit":
                     return
 
                 if result.action == "regenerate":
+                    assert result.new_prompt is not None
+                    assert result.regenerated_frame is not None
                     state.prompt = result.new_prompt  # Update prompt
                     state.current_denoise = result.denoise  # Update denoise value
                     state.invalidate_prompt_cache()
@@ -204,7 +211,9 @@ async def run_loop(
                         state.reset_time = time.time()
                         await asyncio.to_thread(engine.reset)
                         state.seed_frame = result.regenerated_frame
-                        await asyncio.to_thread(engine.append_frame, state.seed_frame)
+                        _ = await asyncio.to_thread(
+                            engine.append_frame, state.seed_frame
+                        )
                         state.frames = 0
                         # Clear history on T2I and add new seed
                         state.image_history.clear()
@@ -218,7 +227,7 @@ async def run_loop(
                         )
                     else:
                         # Append I2I regenerated frame and continue
-                        await asyncio.to_thread(
+                        _ = await asyncio.to_thread(
                             engine.append_frame, result.regenerated_frame
                         )
                         state.last_frame = result.regenerated_frame
@@ -231,8 +240,8 @@ async def run_loop(
                         )
 
                 pygame.event.set_grab(True)
-                pygame.mouse.set_visible(False)
-                pygame.mouse.get_rel()  # discard accumulated mouse movement
+                _ = pygame.mouse.set_visible(False)
+                _ = pygame.mouse.get_rel()  # discard accumulated mouse movement
                 continue
 
             if restart.is_set() or state.frames >= limit:
@@ -246,10 +255,10 @@ async def run_loop(
                 rmb_pressed
                 and not state.rmb_was_pressed
                 and state.vision_future is None
-                and state.last_frame is not None
+                and state.last_frame is not None  # pyright: ignore[reportUnknownMemberType]
             ):
-                state.rmb_sound.play()
-                state.vision_future = _vision_executor.submit(
+                _ = state.rmb_sound.play()
+                state.vision_future = vision_executor.submit(
                     describe_frame,
                     state.last_frame.clone(),
                     vision_api_url,
@@ -268,11 +277,11 @@ async def run_loop(
                 and state.i2i_future is None
                 and comfyui_url
                 and state.prompt
-                and state.last_frame is not None
+                and state.last_frame is not None  # pyright: ignore[reportUnknownMemberType]
             ):
-                state.lmb_sound.play()
+                _ = state.lmb_sound.play()
                 state.i2i_pending_prompt = state.prompt  # Track prompt for history
-                state.i2i_future = _i2i_executor.submit(
+                state.i2i_future = i2i_executor.submit(
                     generate_i2i,
                     comfyui_url,
                     state.prompt,
@@ -286,10 +295,12 @@ async def run_loop(
             filtered_buttons = ctrl.button - {0x01, 0x02}
             filtered_ctrl = CtrlInput(button=filtered_buttons, mouse=ctrl.mouse)
 
-            img = await asyncio.to_thread(engine.gen_frame, ctrl=filtered_ctrl)
+            img: torch.Tensor = await asyncio.to_thread(  # pyright: ignore[reportUnknownVariableType]
+                engine.gen_frame, ctrl=filtered_ctrl
+            )
             state.frames += 1
             state.last_frame = img
-            draw(img, state)
+            draw(img, state)  # pyright: ignore[reportUnknownArgumentType]
 
             # Start i2i regeneration every i2i_interval frames (if not already running)
             if (
@@ -301,7 +312,7 @@ async def run_loop(
                 and state.prompt
             ):
                 state.i2i_pending_prompt = state.prompt  # Track prompt for history
-                state.i2i_future = _i2i_executor.submit(
+                state.i2i_future = i2i_executor.submit(
                     generate_i2i,
                     comfyui_url,
                     state.prompt,

@@ -20,7 +20,7 @@ def load_prompts() -> list[str]:
     prompts_path = Path(__file__).parent.parent / "prompts.txt"
     if not prompts_path.exists():
         return []
-    prompts = []
+    prompts: list[str] = []
     for line in prompts_path.read_text().splitlines():
         line = line.strip()
         if line and not line.startswith("#"):
@@ -46,10 +46,10 @@ class ImageHistoryEntry:
 
 
 # Separate executor for i2i so it doesn't block the engine
-_i2i_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="i2i")
+i2i_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="i2i")
 
 # Separate executor for vision API calls
-_vision_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vision")
+vision_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vision")
 
 # pygame keycode -> Windows VK int (main ANSI rows only)
 PYGAME_TO_VK = (

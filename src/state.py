@@ -2,11 +2,15 @@
 
 from concurrent.futures import Future
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import pygame
 import torch
 
 from constants import ImageHistoryEntry
+
+if TYPE_CHECKING:
+    from vision_api import VisionResult
 
 
 @dataclass
@@ -33,9 +37,9 @@ class ClientState:
     )
 
     # Async futures for background tasks
-    i2i_future: Future | None = None
+    i2i_future: Future[torch.Tensor] | None = None
     i2i_pending_prompt: str | None = None
-    vision_future: Future | None = None
+    vision_future: "Future[VisionResult] | None" = None
 
     # Mouse button state for edge detection
     lmb_was_pressed: bool = False

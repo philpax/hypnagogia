@@ -1,5 +1,7 @@
 """Rendering functions for the client."""
 
+# pyright: reportUnusedCallResult=none
+
 import time
 
 import pygame
@@ -55,8 +57,8 @@ def draw_image_history(screen_surface: pygame.Surface, state: ClientState) -> No
             img = entry.image.detach()
             if img.dtype != torch.uint8:
                 img = img.clamp(0, 255).to(torch.uint8)
-            frame = img.cpu().numpy()
-            surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+            frame = img.cpu().numpy()  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+            surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))  # pyright: ignore[reportUnknownMemberType]
             thumb = pygame.transform.scale(surf, (thumb_width, thumb_height))
             # Make thumbnail partially transparent
             thumb.set_alpha(int((80 / 100) * 255))
@@ -85,20 +87,20 @@ def draw_image_history(screen_surface: pygame.Surface, state: ClientState) -> No
                     current_line = test_line
                 else:
                     if current_line:
-                        lines.append(current_line)
+                        lines.append(current_line)  # pyright: ignore[reportUnknownMemberType]
                     current_line = word
             if current_line:
-                lines.append(current_line)
+                lines.append(current_line)  # pyright: ignore[reportUnknownMemberType]
 
             # Render prompt lines
             line_height = prompt_font.get_height()
             prompt_surface = pygame.Surface(
-                (thumb_width, line_height * len(lines) + prompt_padding * 2),
+                (thumb_width, line_height * len(lines) + prompt_padding * 2),  # pyright: ignore[reportUnknownArgumentType]
                 pygame.SRCALPHA,
             )
             prompt_surface.fill((0, 0, 0, 150))
-            for li, line in enumerate(lines):
-                text_surf = prompt_font.render(line, True, (255, 255, 255))
+            for li, line in enumerate(lines):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
+                text_surf = prompt_font.render(line, True, (255, 255, 255))  # pyright: ignore[reportUnknownArgumentType]
                 prompt_surface.blit(
                     text_surf,
                     (prompt_padding, prompt_padding + li * line_height),
@@ -127,8 +129,8 @@ def draw(img: torch.Tensor, state: ClientState) -> None:
     img = img.detach()
     if img.dtype != torch.uint8:
         img = img.clamp(0, 255).to(torch.uint8)
-    frame = img.cpu().numpy()  # (H,W,3)
-    surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))  # (W,H,3)
+    frame = img.cpu().numpy()  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))  # pyright: ignore[reportUnknownMemberType]
     surf = pygame.transform.scale(surf, state.screen.get_size())
     state.screen.blit(surf, (0, 0))
 
@@ -136,7 +138,11 @@ def draw(img: torch.Tensor, state: ClientState) -> None:
 
     # Draw prompt at bottom-left (recalculate if window width changed)
     if state.prompt:
-        if state.cached_window_width != sw or state.cached_prompt_surface is None:
+        if (
+            state.cached_window_width != sw
+            or state.cached_prompt_surface is None
+            or state.cached_prompt_shadow is None
+        ):
             state.prompt_font_size = calculate_prompt_font_size(state.prompt, sw)
             prompt_font = pygame.font.SysFont(None, state.prompt_font_size)
             state.cached_prompt_surface = prompt_font.render(

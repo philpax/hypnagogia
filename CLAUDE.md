@@ -1,1 +1,2 @@
 - Use `uvx ruff check` and `uvx ruff format`.
+- Use `uvx basedpyright` for type checking (should show 0 errors, 0 warnings).

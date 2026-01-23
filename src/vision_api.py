@@ -4,10 +4,24 @@ import base64
 import io
 import os
 from dataclasses import dataclass
+from typing import TypedDict
 
 import requests
 import torch
 from PIL import Image
+
+
+class _MessageDict(TypedDict):
+    content: str
+
+
+class _ChoiceDict(TypedDict):
+    message: _MessageDict
+
+
+class _APIResponseDict(TypedDict):
+    choices: list[_ChoiceDict]
+
 
 VISION_SYSTEM_PROMPT = """You are a scene descriptor. Analyze the image and describe it as an image generation prompt.
 
@@ -37,12 +51,12 @@ def _tensor_to_base64_jpeg(tensor: torch.Tensor) -> str:
     if tensor.dtype != torch.uint8:
         tensor = tensor.clamp(0, 255).to(torch.uint8)
 
-    np_image = tensor.cpu().numpy()
-    image = Image.fromarray(np_image, mode="RGB")
+    np_image = tensor.cpu().numpy()  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    image = Image.fromarray(np_image, mode="RGB")  # pyright: ignore[reportUnknownArgumentType]
 
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=85)
-    buffer.seek(0)
+    _ = buffer.seek(0)
 
     return base64.b64encode(buffer.read()).decode("utf-8")
 
@@ -132,9 +146,9 @@ def describe_frame(
         )
 
     try:
-        data = response.json()
-        prompt = data["choices"][0]["message"]["content"].strip()
-        return VisionResult(success=True, prompt=prompt, error=None)
+        data: _APIResponseDict = response.json()  # pyright: ignore[reportAny]
+        prompt_text = data["choices"][0]["message"]["content"].strip()
+        return VisionResult(success=True, prompt=prompt_text, error=None)
     except (KeyError, IndexError, ValueError) as e:
         return VisionResult(
             success=False,
