@@ -19,6 +19,9 @@ from vision_api import VisionResult, describe_frame
 # Prefix to strip from prompts when displaying
 PROMPT_PREFIX = "First-person view, "
 
+# Key to hold for browsing image history (releases mouse grab)
+HISTORY_BROWSE_KEY = pygame.K_q
+
 
 def load_prompts() -> list[str]:
     """Load prompts from prompts.txt if it exists."""
@@ -40,6 +43,14 @@ class PauseMenuResult:
     regenerated_frame: torch.Tensor | None = None
     reset_with_seed: bool = False  # True = T2I reset, False = I2I append
     denoise: float = 0.5  # Denoising factor for I2I
+
+
+@dataclass
+class ImageHistoryEntry:
+    """An entry in the image history showing T2I/I2I generations."""
+
+    image: torch.Tensor  # The generated image
+    prompt: str  # The prompt used to generate it
 
 
 # Separate executor for i2i so it doesn't block the engine
@@ -75,6 +86,8 @@ async def ctrl_stream(
     pause_event: asyncio.Event,
     mouse_sensitivity: float,
     on_scroll: Callable[[int], None] | None = None,
+    on_browse_change: Callable[[bool], None] | None = None,
+    on_history_click: Callable[[tuple[int, int]], None] | None = None,
     whitelisted_keys=None,
 ) -> AsyncIterator[CtrlInput]:
     whitelisted_keys = WHITELIST_KEYS if whitelisted_keys is None else whitelisted_keys
@@ -90,6 +103,7 @@ async def ctrl_stream(
     codes = {k: v for k, v in codes.items() if v in whitelisted_keys}
 
     held: set[int] = set()
+    browsing: bool = False
 
     while True:
         btn: set[int] = set()
@@ -103,6 +117,11 @@ async def ctrl_stream(
                     pause_event.set()
                 elif e.key == pygame.K_u:
                     restart_event.set()
+                elif e.key == HISTORY_BROWSE_KEY:
+                    browsing = True
+                    if on_browse_change:
+                        on_browse_change(True)
+                    continue  # Don't forward Q to game
 
                 c = codes.get(("k", e.key))
                 if c is not None:
@@ -110,28 +129,43 @@ async def ctrl_stream(
                     held.add(c)
 
             elif e.type == pygame.KEYUP:
+                if e.key == HISTORY_BROWSE_KEY:
+                    browsing = False
+                    if on_browse_change:
+                        on_browse_change(False)
+                    continue  # Don't forward Q to game
+
                 c = codes.get(("k", e.key))
                 if c is not None:
                     held.discard(c)
 
             elif e.type == pygame.MOUSEBUTTONDOWN:
-                c = codes.get(("m", e.button))
-                if c is not None:
-                    btn.add(c)
+                # When browsing, LMB clicks go to history instead of game
+                if browsing and e.button == 1 and on_history_click:
+                    on_history_click(e.pos)
+                else:
+                    c = codes.get(("m", e.button))
+                    if c is not None:
+                        btn.add(c)
 
             elif e.type == pygame.MOUSEWHEEL and on_scroll is not None:
                 on_scroll(e.y)  # e.y is positive for scroll up, negative for down
 
         btn.update(held)
 
-        mb = pygame.mouse.get_pressed(3)
-        btn.update(
-            c
-            for i, down in enumerate(mb, 1)
-            if down and (c := codes.get(("m", i))) is not None
-        )
+        # When browsing, don't pass mouse buttons to game
+        if not browsing:
+            mb = pygame.mouse.get_pressed(3)
+            btn.update(
+                c
+                for i, down in enumerate(mb, 1)
+                if down and (c := codes.get(("m", i))) is not None
+            )
 
         dx, dy = pygame.mouse.get_rel()
+        # When browsing, don't pass mouse movement to game
+        if browsing:
+            dx, dy = 0, 0
         yield CtrlInput(
             button=btn, mouse=(dx * mouse_sensitivity, dy * mouse_sensitivity)
         )
@@ -158,7 +192,7 @@ async def run_loop(
         (config.window.width, config.window.height), pygame.RESIZABLE
     )
     pygame.scrap.init()  # Enable clipboard support (must be after display init)
-    pygame.display.set_caption("hypnagogia (esc to pause, u to reset)")
+    pygame.display.set_caption(f"hypnagogia (esc to pause, u to reset, {pygame.key.name(HISTORY_BROWSE_KEY)} to browse history)")
 
     # Load sound effects
     sounds_dir = Path(__file__).parent.parent / "sounds"
@@ -173,7 +207,7 @@ async def run_loop(
         limit = max(1, n_frames - 2)
 
         async def reset(*, reload_seed: bool = False) -> None:
-            nonlocal seed_frame, reset_time
+            nonlocal seed_frame, reset_time, image_history, history_scroll
             reset_time = time.time()
             await asyncio.to_thread(engine.reset)
             if reload_seed or seed_frame is None:
@@ -185,26 +219,89 @@ async def run_loop(
                     raise ValueError(
                         "ComfyUI URL and prompt are required for seed generation"
                     )
+            # Always reset history to just the seed frame
+            image_history = []
+            history_cache.clear()
+            history_scroll = 0
             if seed_frame is not None:
+                image_history.insert(
+                    0, ImageHistoryEntry(image=seed_frame, prompt=prompt)
+                )
                 await asyncio.to_thread(engine.append_frame, seed_frame)
 
         i2i_future: Future | None = None
+        i2i_pending_prompt: str | None = None  # Prompt used for pending I2I
         vision_future: Future | None = None
         rmb_was_pressed: bool = False
         lmb_was_pressed: bool = False
         reset_time: float = time.time()
         current_denoise: float = config.i2i.denoise  # Track current denoise value
+        image_history: list[ImageHistoryEntry] = []  # History of T2I/I2I images
+        history_scroll: int = 0  # Scroll offset for image history
 
         def handle_scroll(y: int) -> None:
-            nonlocal current_denoise
-            # y > 0 means scroll up (increase), y < 0 means scroll down (decrease)
-            current_denoise = max(0.0, min(1.0, current_denoise + y * 0.05))
+            nonlocal current_denoise, history_scroll
+            # Check if mouse is over history area (top-left)
+            mouse_x, mouse_y = pygame.mouse.get_pos()
+            sw, sh = screen.get_size()
+            history_width = sw // 8  # thumb_width, no padding
+            if mouse_x < history_width and image_history:
+                # Scroll history (y > 0 = scroll up = decrease offset, y < 0 = scroll down = increase offset)
+                max_scroll = max(0, len(image_history) - 1)
+                history_scroll = max(0, min(max_scroll, history_scroll - y))
+            else:
+                # y > 0 means scroll up (increase), y < 0 means scroll down (decrease)
+                current_denoise = max(0.0, min(1.0, current_denoise + y * 0.05))
+
+        def handle_browse_change(is_browsing: bool) -> None:
+            """Handle entering/exiting history browse mode (Q key)."""
+            if is_browsing:
+                pygame.event.set_grab(False)
+                pygame.mouse.set_visible(True)
+            else:
+                pygame.event.set_grab(True)
+                pygame.mouse.set_visible(False)
+                pygame.mouse.get_rel()  # Discard accumulated mouse movement
+
+        def handle_history_click(pos: tuple[int, int]) -> None:
+            """Handle clicking on a history item to set its prompt."""
+            nonlocal \
+                prompt, \
+                cached_prompt_surface, \
+                cached_prompt_shadow, \
+                cached_window_width
+            if not image_history:
+                return
+
+            mouse_x, mouse_y = pos
+            sw, sh = screen.get_size()
+            thumb_width = sw // 8
+            thumb_height = sh // 8
+            estimated_prompt_height = 30
+            entry_height = thumb_height + estimated_prompt_height
+
+            # Check if click is within history area
+            if mouse_x > thumb_width:
+                return
+
+            # Calculate which entry was clicked (no offset, starts at y=0)
+            entry_index = history_scroll + (mouse_y // entry_height)
+            if 0 <= entry_index < len(image_history):
+                entry = image_history[entry_index]
+                prompt = entry.prompt
+                # Invalidate cached prompt surfaces
+                cached_prompt_surface = None
+                cached_prompt_shadow = None
+                cached_window_width = None
+                print(f"Set prompt from history: {prompt}")
 
         ctrls = ctrl_stream(
             restart_event=restart,
             pause_event=pause,
             mouse_sensitivity=mouse_sensitivity,
             on_scroll=handle_scroll,
+            on_browse_change=handle_browse_change,
+            on_history_click=handle_history_click,
         )
 
         prompt_font_size: int | None = None
@@ -223,6 +320,117 @@ async def run_loop(
                 if text_width <= available_width:
                     return size
             return 8
+
+        # Cache for history thumbnail surfaces
+        history_cache: dict[
+            int, tuple[pygame.Surface, pygame.Surface, pygame.Surface]
+        ] = {}
+
+        def draw_image_history(screen_surface: pygame.Surface) -> None:
+            """Draw scrollable image history in top-left corner."""
+            nonlocal history_scroll
+            if not image_history:
+                return
+
+            sw, sh = screen_surface.get_size()
+            thumb_width = sw // 8
+            thumb_height = sh // 8
+            prompt_padding = 3
+
+            # Calculate visible area (estimate prompt height)
+            estimated_prompt_height = 30
+            entry_height = thumb_height + estimated_prompt_height
+            visible_entries = 5
+
+            # Clamp scroll offset
+            max_scroll = max(0, len(image_history) - visible_entries)
+            history_scroll = max(0, min(history_scroll, max_scroll))
+
+            # Draw entries (most recent at top)
+            y_pos = 0
+            for i in range(visible_entries):
+                idx = history_scroll + i
+                if idx >= len(image_history):
+                    break
+                if y_pos >= sh:
+                    break
+
+                entry = image_history[idx]
+
+                # Get or create cached surfaces
+                entry_id = id(entry.image)
+                if entry_id not in history_cache:
+                    # Create thumbnail
+                    img = entry.image.detach()
+                    if img.dtype != torch.uint8:
+                        img = img.clamp(0, 255).to(torch.uint8)
+                    frame = img.cpu().numpy()
+                    surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+                    thumb = pygame.transform.scale(surf, (thumb_width, thumb_height))
+                    # Make thumbnail partially transparent
+                    thumb.set_alpha(int((80 / 100) * 255))
+
+                    # Create prompt text (sized to fit thumbnail width)
+                    prompt_text = entry.prompt
+                    if prompt_text.startswith(PROMPT_PREFIX):
+                        prompt_text = prompt_text[len(PROMPT_PREFIX) :]
+
+                    # Calculate font size to fit width
+                    font_size = 8
+                    for size in range(16, 7, -1):
+                        test_font = pygame.font.SysFont(None, size)
+                        if test_font.size(prompt_text)[0] <= thumb_width - prompt_padding * 2:
+                            font_size = size
+                            break
+
+                    prompt_font = pygame.font.SysFont(None, font_size)
+                    # Wrap text if needed
+                    words = prompt_text.split()
+                    lines = []
+                    current_line = ""
+                    for word in words:
+                        test_line = current_line + (" " if current_line else "") + word
+                        if prompt_font.size(test_line)[0] <= thumb_width - prompt_padding * 2:
+                            current_line = test_line
+                        else:
+                            if current_line:
+                                lines.append(current_line)
+                            current_line = word
+                    if current_line:
+                        lines.append(current_line)
+
+                    # Render prompt lines
+                    line_height = prompt_font.get_height()
+                    prompt_surface = pygame.Surface(
+                        (thumb_width, line_height * len(lines) + prompt_padding * 2),
+                        pygame.SRCALPHA,
+                    )
+                    prompt_surface.fill((0, 0, 0, 150))
+                    for li, line in enumerate(lines):
+                        text_surf = prompt_font.render(line, True, (255, 255, 255))
+                        prompt_surface.blit(
+                            text_surf,
+                            (prompt_padding, prompt_padding + li * line_height),
+                        )
+
+                    # Shadow for prompt (unused but kept for cache structure)
+                    prompt_shadow = pygame.Surface(
+                        prompt_surface.get_size(), pygame.SRCALPHA
+                    )
+
+                    history_cache[entry_id] = (thumb, prompt_surface, prompt_shadow)
+
+                thumb, prompt_surface, prompt_shadow = history_cache[entry_id]
+
+                # Draw thumbnail (no border, no padding)
+                screen_surface.blit(thumb, (0, y_pos))
+
+                # Draw prompt below thumbnail
+                prompt_y = y_pos + thumb_height
+                screen_surface.blit(prompt_surface, (0, prompt_y))
+
+                # Advance y_pos for next entry
+                y_pos = prompt_y + prompt_surface.get_height()
 
         def draw(img: torch.Tensor) -> None:
             nonlocal \
@@ -287,6 +495,9 @@ async def run_loop(
                 x = sw // 2 - surf.get_width() // 2
                 screen.blit(shadow, (x + 2, 12))
                 screen.blit(surf, (x, 10))
+
+            # Draw image history in top-left
+            draw_image_history(screen)
 
             pygame.display.flip()
 
@@ -893,7 +1104,13 @@ async def run_loop(
             if i2i_future is not None and i2i_future.done():
                 refreshed = i2i_future.result()
                 await asyncio.to_thread(engine.append_frame, refreshed)
+                # Add to image history
+                if i2i_pending_prompt:
+                    image_history.insert(
+                        0, ImageHistoryEntry(image=refreshed, prompt=i2i_pending_prompt)
+                    )
                 i2i_future = None
+                i2i_pending_prompt = None
 
             # Check if vision task completed (non-blocking)
             if vision_future is not None and vision_future.done():
@@ -934,12 +1151,26 @@ async def run_loop(
                         seed_frame = result.regenerated_frame
                         await asyncio.to_thread(engine.append_frame, seed_frame)
                         frames = 0
+                        # Clear history on T2I and add new seed
+                        image_history.clear()
+                        history_cache.clear()
+                        history_scroll = 0
+                        image_history.insert(
+                            0, ImageHistoryEntry(image=seed_frame, prompt=prompt)
+                        )
                     else:
                         # Append I2I regenerated frame and continue
                         await asyncio.to_thread(
                             engine.append_frame, result.regenerated_frame
                         )
                         last_frame = result.regenerated_frame
+                        # Add to image history
+                        image_history.insert(
+                            0,
+                            ImageHistoryEntry(
+                                image=result.regenerated_frame, prompt=prompt
+                            ),
+                        )
 
                 pygame.event.set_grab(True)
                 pygame.mouse.set_visible(False)
@@ -982,6 +1213,7 @@ async def run_loop(
                 and last_frame is not None
             ):
                 lmb_sound.play()
+                i2i_pending_prompt = prompt  # Track prompt for history
                 i2i_future = _i2i_executor.submit(
                     generate_i2i,
                     comfyui_url,
@@ -1010,6 +1242,7 @@ async def run_loop(
                 and comfyui_url
                 and prompt
             ):
+                i2i_pending_prompt = prompt  # Track prompt for history
                 i2i_future = _i2i_executor.submit(
                     generate_i2i, comfyui_url, prompt, last_frame, None, current_denoise
                 )
