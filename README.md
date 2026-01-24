@@ -43,6 +43,8 @@ Update `config.json` as appropriate. The ComfyUI workflows are specialised to th
 | `--seed` | random | Seed for reproducible generation |
 | `--n-frames` | 4096 | Frame buffer size before auto-reset |
 | `--i2i-interval` | 0 (disabled) | Frames between automatic I2I regenerations |
+| `--i2i-vlm-regen` | false | Use VLM to generate new prompt before I2I regeneration (requires `--i2i-interval`) |
+| `--denoise` | 0.4 | Denoising strength for I2I regeneration (0.0-1.0) |
 | `--device` | cuda | PyTorch device |
 | `--mouse-sensitivity` | 1.5 | Mouse control multiplier |
 | `--vision-api-url` | https://api.openai.com/v1 | Vision API base URL |
@@ -62,5 +64,6 @@ uv run src/client.py --url http://comfyui:8188 --vision-api-url http://vlm-serve
 | Left-click | Regenerate frame with I2I and inject |
 | Right-click | Analyse frame with VLM for new prompt |
 | Scroll wheel | Adjust denoise strength |
-| ESC | Open pause menu |
+| Q (hold) | Browse image history (click to restore prompt) |
 | U | Manual reset |
+| ESC | Open pause menu |
