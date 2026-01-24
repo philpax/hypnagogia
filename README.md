@@ -2,7 +2,7 @@
 
 An interactive dream machine, forked from [Overworld's local gameplay client](https://github.com/Overworldai/local_world), with ComfyUI integration.
 
-<video src="video.mp4" controls muted autoplay loop></video>
+<video src="https://github.com/user-attachments/assets/569ac959-e22e-4dab-a203-244bbd5cf86d" controls autoplay loop></video>
 
 The first frame is generated using text-to-image (Z Image Turbo). You can then explore the dream world using WASD + mouse, with control over its direction:
 
