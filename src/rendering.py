@@ -183,6 +183,23 @@ def draw(img: torch.Tensor, state: ClientState) -> None:
     state.screen.blit(denoise_shadow, (denoise_x + 2, 48))
     state.screen.blit(denoise_surface, (denoise_x, 46))
 
+    # Calculate and draw FPS + frametime below denoise percentage
+    current_time = time.time()
+    if state.fps_last_time > 0:
+        delta = current_time - state.fps_last_time
+        if delta > 0:
+            state.frametime_ms = delta * 1000
+            state.fps_value = 1.0 / delta
+    state.fps_last_time = current_time
+
+    fps_text = f"{state.fps_value:.1f} FPS | {state.frametime_ms:.1f}ms"
+    fps_font = pygame.font.SysFont("consolas", 20)
+    fps_surface = fps_font.render(fps_text, True, (180, 255, 180))
+    fps_shadow = fps_font.render(fps_text, True, (0, 0, 0))
+    fps_x = sw - fps_surface.get_width() - 15
+    state.screen.blit(fps_shadow, (fps_x + 2, 78))
+    state.screen.blit(fps_surface, (fps_x, 76))
+
     # Draw "ANALYZING..." indicator when vision is processing
     if state.vision_future is not None:
         indicator_font = pygame.font.SysFont("consolas", 24)

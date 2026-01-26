@@ -69,6 +69,11 @@ class ClientState:
     cached_prompt_shadow: pygame.Surface | None = None
     cached_window_width: int | None = None
 
+    # FPS tracking
+    fps_last_time: float = 0.0
+    fps_value: float = 0.0
+    frametime_ms: float = 0.0
+
     def invalidate_prompt_cache(self) -> None:
         """Clear cached prompt surfaces, forcing re-render on next draw."""
         self.cached_prompt_surface = None
