@@ -137,7 +137,7 @@ def draw(img: torch.Tensor, state: ClientState) -> None:
     sw, sh = state.screen.get_size()
 
     # Draw prompt at bottom-left (recalculate if window width changed)
-    if state.prompt:
+    if state.prompt and state.show_prompt:
         if (
             state.cached_window_width != sw
             or state.cached_prompt_surface is None
@@ -211,6 +211,7 @@ def draw(img: torch.Tensor, state: ClientState) -> None:
         state.screen.blit(indicator_surf, (x, 10))
 
     # Draw image history in top-left
-    draw_image_history(state.screen, state)
+    if state.show_history_previews:
+        draw_image_history(state.screen, state)
 
     pygame.display.flip()

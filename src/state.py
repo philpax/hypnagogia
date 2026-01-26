@@ -74,6 +74,10 @@ class ClientState:
     fps_value: float = 0.0
     frametime_ms: float = 0.0
 
+    # User preferences (persisted to config_user.json)
+    show_history_previews: bool = True
+    show_prompt: bool = True
+
     def invalidate_prompt_cache(self) -> None:
         """Clear cached prompt surfaces, forcing re-render on next draw."""
         self.cached_prompt_surface = None

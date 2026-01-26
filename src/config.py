@@ -2,7 +2,7 @@
 
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -152,3 +152,51 @@ def get_config() -> Config:
     if _config is None:
         _config = load_config()
     return _config
+
+
+class UserConfigDict(TypedDict, total=False):
+    show_history_previews: bool
+    show_prompt: bool
+
+
+@dataclass
+class UserConfig:
+    """User-specific configuration that persists across sessions."""
+
+    show_history_previews: bool = field(default=True)
+    show_prompt: bool = field(default=True)
+
+
+def _get_user_config_path() -> Path:
+    """Get the path to config_user.json."""
+    return Path(__file__).parent.parent / "config_user.json"
+
+
+def load_user_config() -> UserConfig:
+    """Load user configuration from config_user.json, creating defaults if missing."""
+    config_path = _get_user_config_path()
+
+    if not config_path.exists():
+        return UserConfig()
+
+    try:
+        with open(config_path) as f:
+            data = cast(UserConfigDict, json.load(f))
+        return UserConfig(
+            show_history_previews=data.get("show_history_previews", True),
+            show_prompt=data.get("show_prompt", True),
+        )
+    except (json.JSONDecodeError, OSError):
+        return UserConfig()
+
+
+def save_user_config(user_config: UserConfig) -> None:
+    """Save user configuration to config_user.json."""
+    config_path = _get_user_config_path()
+    data: UserConfigDict = {
+        "show_history_previews": user_config.show_history_previews,
+        "show_prompt": user_config.show_prompt,
+    }
+    with open(config_path, "w") as f:
+        json.dump(data, f, indent=2)
+        _ = f.write("\n")

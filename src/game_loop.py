@@ -8,7 +8,7 @@ import pygame
 import torch
 from world_engine import CtrlInput, WorldEngine
 
-from config import get_config
+from config import get_config, load_user_config
 from seed_gen import generate_i2i, generate_t2i
 from vision_api import VisionResult, describe_frame
 
@@ -56,6 +56,9 @@ async def run_loop(
     lmb_sound = pygame.mixer.Sound(sounds_dir / "foom_0.wav")
     rmb_sound = pygame.mixer.Sound(sounds_dir / "alert-beep.mp3")
 
+    # Load user config
+    user_config = load_user_config()
+
     # Initialize client state
     state = ClientState(
         screen=screen,
@@ -64,6 +67,8 @@ async def run_loop(
         seed_frame=seed_frame,
         prompt=prompt,
         current_denoise=denoise,
+        show_history_previews=user_config.show_history_previews,
+        show_prompt=user_config.show_prompt,
     )
 
     try:

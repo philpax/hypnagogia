@@ -12,6 +12,7 @@ import torch
 
 from seed_gen import generate_i2i, generate_t2i
 
+from config import UserConfig, save_user_config
 from constants import PROMPT_PREFIX, PauseMenuResult, i2i_executor, load_prompts
 from state import ClientState
 
@@ -59,6 +60,8 @@ async def show_pause_menu(
 
     # Checkbox state
     reset_checked = False
+    show_history_checked = state.show_history_previews
+    show_prompt_checked = state.show_prompt
 
     # Menu state
     MENU, GENERATING = "menu", "generating"
@@ -96,7 +99,9 @@ async def show_pause_menu(
         input_y = prompts_list_y + prompts_list_height + 15
         slider_y = input_y + input_height + 15
         checkbox_y = slider_y + 35
-        button_y = checkbox_y + 35
+        checkbox2_y = checkbox_y + 28
+        checkbox3_y = checkbox2_y + 28
+        button_y = checkbox3_y + 35
 
         input_rect = pygame.Rect(content_left, input_y, input_width, input_height)
 
@@ -112,6 +117,12 @@ async def show_pause_menu(
 
         checkbox_rect = pygame.Rect(
             content_left, checkbox_y, checkbox_size, checkbox_size
+        )
+        checkbox2_rect = pygame.Rect(
+            content_left, checkbox2_y, checkbox_size, checkbox_size
+        )
+        checkbox3_rect = pygame.Rect(
+            content_left, checkbox3_y, checkbox_size, checkbox_size
         )
 
         # Button row
@@ -252,12 +263,38 @@ async def show_pause_menu(
                         rel_x = max(0, min(slider_width, e.pos[0] - slider_rect.x))  # pyright: ignore[reportAny]
                         denoise_value = rel_x / slider_width
 
-                    # Check checkbox click
+                    # Check checkbox clicks
                     checkbox_hit = pygame.Rect(
                         checkbox_rect.x, checkbox_rect.y, 220, checkbox_size
                     )
                     if checkbox_hit.collidepoint(e.pos):  # pyright: ignore[reportAny]
                         reset_checked = not reset_checked
+
+                    checkbox2_hit = pygame.Rect(
+                        checkbox2_rect.x, checkbox2_rect.y, 220, checkbox_size
+                    )
+                    if checkbox2_hit.collidepoint(e.pos):  # pyright: ignore[reportAny]
+                        show_history_checked = not show_history_checked
+                        state.show_history_previews = show_history_checked
+                        save_user_config(
+                            UserConfig(
+                                show_history_previews=show_history_checked,
+                                show_prompt=show_prompt_checked,
+                            )
+                        )
+
+                    checkbox3_hit = pygame.Rect(
+                        checkbox3_rect.x, checkbox3_rect.y, 220, checkbox_size
+                    )
+                    if checkbox3_hit.collidepoint(e.pos):  # pyright: ignore[reportAny]
+                        show_prompt_checked = not show_prompt_checked
+                        state.show_prompt = show_prompt_checked
+                        save_user_config(
+                            UserConfig(
+                                show_history_previews=show_history_checked,
+                                show_prompt=show_prompt_checked,
+                            )
+                        )
 
                     # Check button clicks
                     if resume_rect.collidepoint(e.pos):  # pyright: ignore[reportAny]
@@ -490,7 +527,8 @@ async def show_pause_menu(
         )
         pygame.draw.rect(screen, (200, 200, 200), knob_rect, border_radius=4)
 
-        # --- Checkbox ---
+        # --- Checkboxes ---
+        # Reset checkbox
         pygame.draw.rect(screen, (50, 50, 50), checkbox_rect, border_radius=4)
         pygame.draw.rect(screen, (100, 100, 100), checkbox_rect, 2, border_radius=4)
         if reset_checked:
@@ -503,6 +541,40 @@ async def show_pause_menu(
             (
                 checkbox_rect.right + 10,
                 checkbox_rect.centery - checkbox_label.get_height() // 2,
+            ),
+        )
+
+        # Show history previews checkbox
+        pygame.draw.rect(screen, (50, 50, 50), checkbox2_rect, border_radius=4)
+        pygame.draw.rect(screen, (100, 100, 100), checkbox2_rect, 2, border_radius=4)
+        if show_history_checked:
+            inner2 = checkbox2_rect.inflate(-6, -6)
+            pygame.draw.rect(screen, (100, 200, 100), inner2, border_radius=2)
+
+        checkbox2_label = label_font.render(
+            "Show history previews", True, (255, 255, 255)
+        )
+        screen.blit(
+            checkbox2_label,
+            (
+                checkbox2_rect.right + 10,
+                checkbox2_rect.centery - checkbox2_label.get_height() // 2,
+            ),
+        )
+
+        # Show prompt checkbox
+        pygame.draw.rect(screen, (50, 50, 50), checkbox3_rect, border_radius=4)
+        pygame.draw.rect(screen, (100, 100, 100), checkbox3_rect, 2, border_radius=4)
+        if show_prompt_checked:
+            inner3 = checkbox3_rect.inflate(-6, -6)
+            pygame.draw.rect(screen, (100, 200, 100), inner3, border_radius=2)
+
+        checkbox3_label = label_font.render("Show prompt", True, (255, 255, 255))
+        screen.blit(
+            checkbox3_label,
+            (
+                checkbox3_rect.right + 10,
+                checkbox3_rect.centery - checkbox3_label.get_height() // 2,
             ),
         )
 
