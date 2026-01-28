@@ -316,6 +316,9 @@ async def run_loop(
                 state.game_state = GameState.PLAYING
                 state.apply_game_state()
                 _ = pygame.mouse.get_rel()  # discard accumulated mouse movement
+                # Reset button state to avoid triggering I2I/vision from UI clicks
+                state.lmb_was_pressed = True
+                state.rmb_was_pressed = True
                 continue
 
             if restart.is_set() or state.frames >= limit:
