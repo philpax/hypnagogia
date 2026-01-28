@@ -14,6 +14,9 @@ PROMPT_PREFIX = "First-person view, "
 # Key to hold for browsing image history (releases mouse grab)
 HISTORY_BROWSE_KEY = pygame.K_q
 
+# Default blend mask falloff threshold (0.0 to 1.0)
+DEFAULT_BLEND_FALLOFF = 0.5
+
 
 def load_prompts() -> list[str]:
     """Load prompts from prompts.txt if it exists."""

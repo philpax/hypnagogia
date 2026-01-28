@@ -8,6 +8,7 @@ import pygame
 import torch
 from world_engine import CtrlInput, WorldEngine
 
+from blending import blend_frames, create_blend_mask
 from config import get_config, load_user_config
 from seed_gen import generate_i2i, generate_t2i
 from vision_api import VisionResult, describe_frame
@@ -69,6 +70,7 @@ async def run_loop(
         current_denoise=denoise,
         show_history_previews=user_config.show_history_previews,
         show_prompt=user_config.show_prompt,
+        blend_falloff=user_config.blend_falloff,
     )
 
     try:
@@ -154,14 +156,36 @@ async def run_loop(
             on_history_click=handle_history_click,
         )
 
+        # Track blend falloff to detect changes
+        last_blend_falloff = state.blend_falloff
+
         await reset(reload_seed=True)
 
         state.frames = 0
         initial_pause_done = False
         async for ctrl in ctrls:
+            # Regenerate mask if falloff changed
+            if state.blend_falloff != last_blend_falloff:
+                state.blend_mask = None
+                last_blend_falloff = state.blend_falloff
+
             # Check if i2i task completed (non-blocking)
             if state.i2i_future is not None and state.i2i_future.done():
                 refreshed = state.i2i_future.result()
+                # Blend i2i result with last world model frame using blend mask
+                if state.last_frame is not None:  # pyright: ignore[reportUnknownMemberType]
+                    h, w = refreshed.shape[:2]
+                    if (
+                        state.blend_mask is None
+                        or state.blend_mask.shape[0] != h
+                        or state.blend_mask.shape[1] != w
+                    ):
+                        state.blend_mask = create_blend_mask(h, w, state.blend_falloff)
+                    refreshed = blend_frames(
+                        refreshed,
+                        state.last_frame,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                        state.blend_mask,
+                    )
                 _ = await asyncio.to_thread(engine.append_frame, refreshed)
                 # Add to image history
                 if state.i2i_pending_prompt:
@@ -262,16 +286,29 @@ async def run_loop(
                         )
                     else:
                         # Append I2I regenerated frame and continue
-                        _ = await asyncio.to_thread(
-                            engine.append_frame, result.regenerated_frame
-                        )
-                        state.last_frame = result.regenerated_frame
+                        # Blend with last world model frame using blend mask
+                        blended_frame = result.regenerated_frame
+                        if state.last_frame is not None:  # pyright: ignore[reportUnknownMemberType]
+                            h, w = blended_frame.shape[:2]
+                            if (
+                                state.blend_mask is None
+                                or state.blend_mask.shape[0] != h
+                                or state.blend_mask.shape[1] != w
+                            ):
+                                state.blend_mask = create_blend_mask(
+                                    h, w, state.blend_falloff
+                                )
+                            blended_frame = blend_frames(
+                                blended_frame,
+                                state.last_frame,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                                state.blend_mask,
+                            )
+                        _ = await asyncio.to_thread(engine.append_frame, blended_frame)
+                        state.last_frame = blended_frame
                         # Add to image history
                         state.image_history.insert(
                             0,
-                            ImageHistoryEntry(
-                                image=result.regenerated_frame, prompt=state.prompt
-                            ),
+                            ImageHistoryEntry(image=blended_frame, prompt=state.prompt),
                         )
 
                 # Start play timer when resuming

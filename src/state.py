@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pygame
 import torch
 
-from constants import ImageHistoryEntry
+from constants import DEFAULT_BLEND_FALLOFF, ImageHistoryEntry
 
 if TYPE_CHECKING:
     from vision_api import VisionResult
@@ -74,9 +74,13 @@ class ClientState:
     fps_value: float = 0.0
     frametime_ms: float = 0.0
 
+    # Cached blend mask (lazily created)
+    blend_mask: torch.Tensor | None = None
+
     # User preferences (persisted to config_user.json)
     show_history_previews: bool = True
     show_prompt: bool = True
+    blend_falloff: float = DEFAULT_BLEND_FALLOFF
 
     def invalidate_prompt_cache(self) -> None:
         """Clear cached prompt surfaces, forcing re-render on next draw."""

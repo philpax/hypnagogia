@@ -10,7 +10,8 @@ from concurrent.futures import Future
 import pygame
 import torch
 
-from seed_gen import generate_i2i, generate_t2i
+from blending import create_blend_mask
+from seed_gen import ENGINE_RESOLUTION, generate_i2i, generate_t2i
 
 from config import UserConfig, save_user_config
 from constants import PROMPT_PREFIX, PauseMenuResult, i2i_executor, load_prompts
@@ -58,6 +59,11 @@ async def show_pause_menu(
     denoise_value = state.current_denoise  # Use current value, not config default
     slider_dragging = False
 
+    # Blend falloff slider state
+    blend_falloff_value = state.blend_falloff
+    blend_falloff_dragging = False
+    mask_preview_surface: pygame.Surface | None = None
+
     # Checkbox state
     reset_checked = False
     show_history_checked = state.show_history_previews
@@ -93,12 +99,13 @@ async def show_pause_menu(
         # Vertical layout starting from top
         title_y = 40
         prompts_list_y = title_y + 50
-        prompts_list_height = min(150, max(80, sh - 380))
+        prompts_list_height = min(150, max(80, sh - 420))  # Adjusted for blend slider
         visible_prompts = prompts_list_height // prompts_item_height
 
         input_y = prompts_list_y + prompts_list_height + 15
         slider_y = input_y + input_height + 15
-        checkbox_y = slider_y + 35
+        blend_slider_y = slider_y + 35
+        checkbox_y = blend_slider_y + 35
         checkbox2_y = checkbox_y + 28
         checkbox3_y = checkbox2_y + 28
         button_y = checkbox3_y + 35
@@ -114,6 +121,9 @@ async def show_pause_menu(
         slider_width = 200
         slider_height = 20
         slider_rect = pygame.Rect(content_left, slider_y, slider_width, slider_height)
+        blend_slider_rect = pygame.Rect(
+            content_left, blend_slider_y, slider_width, slider_height
+        )
 
         checkbox_rect = pygame.Rect(
             content_left, checkbox_y, checkbox_size, checkbox_size
@@ -251,7 +261,7 @@ async def show_pause_menu(
                             cursor_pos = len(input_text)
                             scroll_offset = 0
 
-                    # Check slider click
+                    # Check denoise slider click
                     slider_hit = pygame.Rect(
                         slider_rect.x - 5,
                         slider_rect.y - 5,
@@ -262,6 +272,31 @@ async def show_pause_menu(
                         slider_dragging = True
                         rel_x = max(0, min(slider_width, e.pos[0] - slider_rect.x))  # pyright: ignore[reportAny]
                         denoise_value = rel_x / slider_width
+
+                    # Check blend falloff slider click
+                    blend_slider_hit = pygame.Rect(
+                        blend_slider_rect.x - 5,
+                        blend_slider_rect.y - 5,
+                        slider_width + 10,
+                        slider_height + 10,
+                    )
+                    if blend_slider_hit.collidepoint(e.pos):  # pyright: ignore[reportAny]
+                        blend_falloff_dragging = True
+                        rel_x = max(
+                            0,
+                            min(slider_width, e.pos[0] - blend_slider_rect.x),  # pyright: ignore[reportAny]
+                        )
+                        blend_falloff_value = rel_x / slider_width
+                        mask_preview_surface = None  # Invalidate preview
+                        state.blend_falloff = blend_falloff_value
+                        state.blend_mask = None  # Invalidate mask cache
+                        save_user_config(
+                            UserConfig(
+                                show_history_previews=show_history_checked,
+                                show_prompt=show_prompt_checked,
+                                blend_falloff=blend_falloff_value,
+                            )
+                        )
 
                     # Check checkbox clicks
                     checkbox_hit = pygame.Rect(
@@ -280,6 +315,7 @@ async def show_pause_menu(
                             UserConfig(
                                 show_history_previews=show_history_checked,
                                 show_prompt=show_prompt_checked,
+                                blend_falloff=blend_falloff_value,
                             )
                         )
 
@@ -293,6 +329,7 @@ async def show_pause_menu(
                             UserConfig(
                                 show_history_previews=show_history_checked,
                                 show_prompt=show_prompt_checked,
+                                blend_falloff=blend_falloff_value,
                             )
                         )
 
@@ -329,10 +366,28 @@ async def show_pause_menu(
 
                 if e.type == pygame.MOUSEBUTTONUP and e.button == 1:
                     slider_dragging = False
+                    blend_falloff_dragging = False
 
-                if e.type == pygame.MOUSEMOTION and slider_dragging:
-                    rel_x = max(0, min(slider_width, e.pos[0] - slider_rect.x))  # pyright: ignore[reportAny]
-                    denoise_value = rel_x / slider_width
+                if e.type == pygame.MOUSEMOTION:
+                    if slider_dragging:
+                        rel_x = max(0, min(slider_width, e.pos[0] - slider_rect.x))  # pyright: ignore[reportAny]
+                        denoise_value = rel_x / slider_width
+                    if blend_falloff_dragging:
+                        rel_x = max(
+                            0,
+                            min(slider_width, e.pos[0] - blend_slider_rect.x),  # pyright: ignore[reportAny]
+                        )
+                        blend_falloff_value = rel_x / slider_width
+                        mask_preview_surface = None  # Invalidate preview
+                        state.blend_falloff = blend_falloff_value
+                        state.blend_mask = None  # Invalidate mask cache
+                        save_user_config(
+                            UserConfig(
+                                show_history_previews=show_history_checked,
+                                show_prompt=show_prompt_checked,
+                                blend_falloff=blend_falloff_value,
+                            )
+                        )
 
                 # Scroll prompts list with mouse wheel
                 if e.type == pygame.MOUSEWHEEL and prompts_rect.collidepoint(
@@ -526,6 +581,66 @@ async def show_pause_menu(
             slider_height + 4,
         )
         pygame.draw.rect(screen, (200, 200, 200), knob_rect, border_radius=4)
+
+        # --- Blend Falloff Slider ---
+        blend_slider_label = label_font.render(
+            f"Blend Falloff: {blend_falloff_value:.2f}", True, (255, 255, 255)
+        )
+        label_x = blend_slider_rect.right + 15
+        label_y = blend_slider_rect.y
+        screen.blit(blend_slider_label, (label_x, label_y))
+
+        # Slider track
+        pygame.draw.rect(screen, (60, 60, 60), blend_slider_rect, border_radius=4)
+        # Filled portion
+        blend_filled_rect = pygame.Rect(
+            blend_slider_rect.x,
+            blend_slider_rect.y,
+            int(blend_falloff_value * slider_width),
+            slider_height,
+        )
+        pygame.draw.rect(screen, (100, 180, 100), blend_filled_rect, border_radius=4)
+        # Slider knob
+        blend_knob_rect = pygame.Rect(
+            blend_slider_rect.x + int(blend_falloff_value * slider_width) - 6,
+            blend_slider_rect.y - 2,
+            12,
+            slider_height + 4,
+        )
+        pygame.draw.rect(screen, (200, 200, 200), blend_knob_rect, border_radius=4)
+
+        # --- Mask Preview ---
+        # Calculate preview dimensions: same height as label, ENGINE_RESOLUTION aspect ratio
+        preview_height = blend_slider_label.get_height()
+        aspect_ratio = ENGINE_RESOLUTION[0] / ENGINE_RESOLUTION[1]  # width / height
+        preview_width = int(preview_height * aspect_ratio)
+        preview_x = label_x + blend_slider_label.get_width() + 10
+        preview_y = label_y
+
+        # Generate mask preview if needed (or if size changed)
+        if (
+            mask_preview_surface is None
+            or mask_preview_surface.get_width() != preview_width
+            or mask_preview_surface.get_height() != preview_height
+        ):
+            mask_tensor = create_blend_mask(
+                preview_height, preview_width, blend_falloff_value
+            )
+            # Convert to 8-bit grayscale and then to pygame surface
+            mask_uint8 = (mask_tensor * 255).to(torch.uint8).numpy()  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            # Create RGB surface from grayscale
+            mask_rgb = mask_uint8[:, :, None].repeat(3, axis=2)  # pyright: ignore[reportUnknownVariableType]
+            mask_preview_surface = pygame.surfarray.make_surface(  # pyright: ignore[reportUnknownMemberType]
+                mask_rgb.transpose(1, 0, 2)
+            )
+
+        # Draw mask preview with border
+        preview_rect = pygame.Rect(preview_x, preview_y, preview_width, preview_height)
+        pygame.draw.rect(
+            screen, (60, 60, 60), preview_rect.inflate(4, 4), border_radius=2
+        )
+        screen.blit(mask_preview_surface, preview_rect.topleft)
+        pygame.draw.rect(screen, (100, 100, 100), preview_rect, 1, border_radius=1)
 
         # --- Checkboxes ---
         # Reset checkbox

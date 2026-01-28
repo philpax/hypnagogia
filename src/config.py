@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypedDict, cast
 
+from constants import DEFAULT_BLEND_FALLOFF
+
 
 class WindowConfigDict(TypedDict):
     width: int
@@ -157,6 +159,7 @@ def get_config() -> Config:
 class UserConfigDict(TypedDict, total=False):
     show_history_previews: bool
     show_prompt: bool
+    blend_falloff: float
 
 
 @dataclass
@@ -165,6 +168,7 @@ class UserConfig:
 
     show_history_previews: bool = field(default=True)
     show_prompt: bool = field(default=True)
+    blend_falloff: float = field(default=DEFAULT_BLEND_FALLOFF)
 
 
 def _get_user_config_path() -> Path:
@@ -185,6 +189,7 @@ def load_user_config() -> UserConfig:
         return UserConfig(
             show_history_previews=data.get("show_history_previews", True),
             show_prompt=data.get("show_prompt", True),
+            blend_falloff=data.get("blend_falloff", DEFAULT_BLEND_FALLOFF),
         )
     except (json.JSONDecodeError, OSError):
         return UserConfig()
@@ -196,6 +201,7 @@ def save_user_config(user_config: UserConfig) -> None:
     data: UserConfigDict = {
         "show_history_previews": user_config.show_history_previews,
         "show_prompt": user_config.show_prompt,
+        "blend_falloff": user_config.blend_falloff,
     }
     with open(config_path, "w") as f:
         json.dump(data, f, indent=2)
