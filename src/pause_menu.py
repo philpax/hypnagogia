@@ -6,6 +6,7 @@ import asyncio
 import math
 import time
 from concurrent.futures import Future
+from pathlib import Path
 
 import pygame
 import torch
@@ -69,6 +70,7 @@ async def show_pause_menu(
     show_history_checked = state.show_history_previews
     show_prompt_checked = state.show_prompt
     click_repainting_checked = state.click_repainting
+    recording_enabled_checked = state.recording_enabled
 
     # Menu state
     MENU, GENERATING = "menu", "generating"
@@ -82,7 +84,7 @@ async def show_pause_menu(
     input_height = 32
     input_padding = 8
     checkbox_size = 20
-    button_width = 90
+    button_width = 80
     button_height = 36
 
     # Calculate char width for monospace font
@@ -110,7 +112,8 @@ async def show_pause_menu(
         checkbox2_y = checkbox_y + 28
         checkbox3_y = checkbox2_y + 28
         checkbox4_y = checkbox3_y + 28
-        button_y = checkbox4_y + 35
+        checkbox5_y = checkbox4_y + 28
+        button_y = checkbox5_y + 35
 
         input_rect = pygame.Rect(content_left, input_y, input_width, input_height)
 
@@ -139,10 +142,13 @@ async def show_pause_menu(
         checkbox4_rect = pygame.Rect(
             content_left, checkbox4_y, checkbox_size, checkbox_size
         )
+        checkbox5_rect = pygame.Rect(
+            content_left, checkbox5_y, checkbox_size, checkbox_size
+        )
 
         # Button row
-        button_spacing = 12
-        total_buttons_width = button_width * 5 + button_spacing * 4
+        button_spacing = 10
+        total_buttons_width = button_width * 7 + button_spacing * 6
         resume_rect = pygame.Rect(
             center_x - total_buttons_width // 2,
             button_y,
@@ -167,8 +173,20 @@ async def show_pause_menu(
             button_width,
             button_height,
         )
-        quit_rect = pygame.Rect(
+        replay_rect = pygame.Rect(
             load_seed_rect.right + button_spacing,
+            button_y,
+            button_width,
+            button_height,
+        )
+        rerecord_rect = pygame.Rect(
+            replay_rect.right + button_spacing,
+            button_y,
+            button_width,
+            button_height,
+        )
+        quit_rect = pygame.Rect(
+            rerecord_rect.right + button_spacing,
             button_y,
             button_width,
             button_height,
@@ -307,6 +325,7 @@ async def show_pause_menu(
                                 show_prompt=show_prompt_checked,
                                 blend_falloff=blend_falloff_value,
                                 click_repainting=click_repainting_checked,
+                                recording_enabled=recording_enabled_checked,
                             )
                         )
 
@@ -329,6 +348,7 @@ async def show_pause_menu(
                                 show_prompt=show_prompt_checked,
                                 blend_falloff=blend_falloff_value,
                                 click_repainting=click_repainting_checked,
+                                recording_enabled=recording_enabled_checked,
                             )
                         )
 
@@ -344,6 +364,7 @@ async def show_pause_menu(
                                 show_prompt=show_prompt_checked,
                                 blend_falloff=blend_falloff_value,
                                 click_repainting=click_repainting_checked,
+                                recording_enabled=recording_enabled_checked,
                             )
                         )
 
@@ -359,6 +380,23 @@ async def show_pause_menu(
                                 show_prompt=show_prompt_checked,
                                 blend_falloff=blend_falloff_value,
                                 click_repainting=click_repainting_checked,
+                                recording_enabled=recording_enabled_checked,
+                            )
+                        )
+
+                    checkbox5_hit = pygame.Rect(
+                        checkbox5_rect.x, checkbox5_rect.y, 220, checkbox_size
+                    )
+                    if checkbox5_hit.collidepoint(e.pos):  # pyright: ignore[reportAny]
+                        recording_enabled_checked = not recording_enabled_checked
+                        state.recording_enabled = recording_enabled_checked
+                        save_user_config(
+                            UserConfig(
+                                show_history_previews=show_history_checked,
+                                show_prompt=show_prompt_checked,
+                                blend_falloff=blend_falloff_value,
+                                click_repainting=click_repainting_checked,
+                                recording_enabled=recording_enabled_checked,
                             )
                         )
 
@@ -424,6 +462,50 @@ async def show_pause_menu(
                                 reset_with_seed=True,
                                 denoise=denoise_value,
                             )
+                    if replay_rect.collidepoint(e.pos):  # pyright: ignore[reportAny]
+                        import tkinter as tk
+                        from tkinter import filedialog
+
+                        root = tk.Tk()
+                        root.withdraw()
+                        root.attributes("-topmost", True)  # pyright: ignore[reportUnknownMemberType]
+                        replay_file_path = filedialog.askopenfilename(
+                            parent=root,
+                            title="Select recording JSON",
+                            filetypes=[
+                                ("JSON files", "*.json"),
+                                ("All files", "*.*"),
+                            ],
+                        )
+                        root.destroy()
+                        if replay_file_path:
+                            pygame.key.set_repeat(0)
+                            return PauseMenuResult(
+                                action="replay",
+                                replay_json_path=Path(replay_file_path),
+                            )
+                    if rerecord_rect.collidepoint(e.pos):  # pyright: ignore[reportAny]
+                        import tkinter as tk
+                        from tkinter import filedialog
+
+                        root = tk.Tk()
+                        root.withdraw()
+                        root.attributes("-topmost", True)  # pyright: ignore[reportUnknownMemberType]
+                        rerecord_file_path = filedialog.askopenfilename(
+                            parent=root,
+                            title="Select recording JSON to re-record",
+                            filetypes=[
+                                ("JSON files", "*.json"),
+                                ("All files", "*.*"),
+                            ],
+                        )
+                        root.destroy()
+                        if rerecord_file_path:
+                            pygame.key.set_repeat(0)
+                            return PauseMenuResult(
+                                action="rerecord",
+                                replay_json_path=Path(rerecord_file_path),
+                            )
 
                 if e.type == pygame.MOUSEBUTTONUP and e.button == 1:
                     slider_dragging = False
@@ -448,6 +530,7 @@ async def show_pause_menu(
                                 show_prompt=show_prompt_checked,
                                 blend_falloff=blend_falloff_value,
                                 click_repainting=click_repainting_checked,
+                                recording_enabled=recording_enabled_checked,
                             )
                         )
 
@@ -771,6 +854,22 @@ async def show_pause_menu(
             ),
         )
 
+        # Record runs checkbox
+        pygame.draw.rect(screen, (50, 50, 50), checkbox5_rect, border_radius=4)
+        pygame.draw.rect(screen, (100, 100, 100), checkbox5_rect, 2, border_radius=4)
+        if recording_enabled_checked:
+            inner5 = checkbox5_rect.inflate(-6, -6)
+            pygame.draw.rect(screen, (100, 200, 100), inner5, border_radius=2)
+
+        checkbox5_label = label_font.render("Record runs", True, (255, 255, 255))
+        screen.blit(
+            checkbox5_label,
+            (
+                checkbox5_rect.right + 10,
+                checkbox5_rect.centery - checkbox5_label.get_height() // 2,
+            ),
+        )
+
         # Buttons
         mouse_pos = pygame.mouse.get_pos()
         buttons = [
@@ -778,6 +877,8 @@ async def show_pause_menu(
             (clear_rect, "Clear"),
             (submit_rect, "Submit"),
             (load_seed_rect, "Load Seed"),
+            (replay_rect, "Replay"),
+            (rerecord_rect, "Re-record"),
             (quit_rect, "Quit"),
         ]
         for rect, text in buttons:

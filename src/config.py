@@ -161,6 +161,7 @@ class UserConfigDict(TypedDict, total=False):
     show_prompt: bool
     blend_falloff: float
     click_repainting: bool
+    recording_enabled: bool
 
 
 @dataclass
@@ -171,6 +172,7 @@ class UserConfig:
     show_prompt: bool = field(default=True)
     blend_falloff: float = field(default=DEFAULT_BLEND_FALLOFF)
     click_repainting: bool = field(default=True)
+    recording_enabled: bool = field(default=False)
 
 
 def _get_user_config_path() -> Path:
@@ -193,6 +195,7 @@ def load_user_config() -> UserConfig:
             show_prompt=data.get("show_prompt", True),
             blend_falloff=data.get("blend_falloff", DEFAULT_BLEND_FALLOFF),
             click_repainting=data.get("click_repainting", True),
+            recording_enabled=data.get("recording_enabled", False),
         )
     except (json.JSONDecodeError, OSError):
         return UserConfig()
@@ -206,6 +209,7 @@ def save_user_config(user_config: UserConfig) -> None:
         "show_prompt": user_config.show_prompt,
         "blend_falloff": user_config.blend_falloff,
         "click_repainting": user_config.click_repainting,
+        "recording_enabled": user_config.recording_enabled,
     }
     with open(config_path, "w") as f:
         json.dump(data, f, indent=2)

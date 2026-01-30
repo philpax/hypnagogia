@@ -21,7 +21,9 @@ from constants import (
 )
 from input import ctrl_stream
 from pause_menu import show_pause_menu
+from recorder import Recorder, RecordingSettings
 from rendering import draw
+from replay import replay_from_json
 from state import ClientState, GameState
 
 
@@ -72,6 +74,7 @@ async def run_loop(
         show_prompt=user_config.show_prompt,
         blend_falloff=user_config.blend_falloff,
         click_repainting=user_config.click_repainting,
+        recording_enabled=user_config.recording_enabled,
     )
 
     try:
@@ -83,6 +86,11 @@ async def run_loop(
         limit = max(1, n_frames - 2)
 
         async def reset(*, reload_seed: bool = False) -> None:
+            # Finalize any active recorder before resetting
+            if state.recorder is not None:
+                _ = state.recorder.finalize()
+                state.recorder = None
+
             state.play_time = 0.0
             if state.play_start is not None:
                 state.play_start = (
@@ -108,6 +116,25 @@ async def run_loop(
                     0, ImageHistoryEntry(image=state.seed_frame, prompt=state.prompt)
                 )
                 _ = await asyncio.to_thread(engine.append_frame, state.seed_frame)
+
+            # Start new recorder if recording is enabled and we have a real session
+            if state.recording_enabled and initial_pause_done:
+                assert state.seed_frame is not None
+                state.recorder = Recorder(
+                    model_name=config.models.world_engine,
+                    vae_uri=config.models.vae_uri,
+                    seed_frame=state.seed_frame,
+                    initial_prompt=state.prompt or "",
+                    settings=RecordingSettings(
+                        n_frames=n_frames,
+                        i2i_interval=i2i_interval,
+                        i2i_vlm_regen=i2i_vlm_regen,
+                        mouse_sensitivity=mouse_sensitivity,
+                        denoise=state.current_denoise,
+                        blend_falloff=state.blend_falloff,
+                        click_repainting=state.click_repainting,
+                    ),
+                )
 
         def handle_scroll(y: int) -> None:
             # Check if mouse is over history area (top-left)
@@ -164,10 +191,10 @@ async def run_loop(
         state.seed_frame = torch.zeros(
             ENGINE_RESOLUTION[1], ENGINE_RESOLUTION[0], 3, dtype=torch.uint8
         )
+        initial_pause_done = False
         await reset(reload_seed=False)
 
         state.frames = 0
-        initial_pause_done = False
         async for ctrl in ctrls:
             # Regenerate mask if falloff changed
             if state.blend_falloff != last_blend_falloff:
@@ -192,6 +219,13 @@ async def run_loop(
                         state.blend_mask,
                     )
                 _ = await asyncio.to_thread(engine.append_frame, refreshed)
+                if state.recorder is not None and state.i2i_pending_prompt:
+                    state.recorder.record_injection(
+                        state.frames,
+                        refreshed,
+                        state.i2i_pending_prompt,
+                        "i2i_append",
+                    )
                 # Add to image history
                 if state.i2i_pending_prompt:
                     state.image_history.insert(
@@ -252,6 +286,11 @@ async def run_loop(
 
             if pause.is_set():
                 pause.clear()
+                # Finalize recording on pause so each recording is one
+                # uninterrupted play segment (reset → pause)
+                if state.recorder is not None:
+                    _ = state.recorder.finalize()
+                    state.recorder = None
                 result = await show_pause_menu(
                     screen,
                     state,
@@ -271,6 +310,11 @@ async def run_loop(
                     state.invalidate_prompt_cache()
 
                     if result.reset_with_seed:
+                        # Finalize any active recorder before resetting
+                        if state.recorder is not None:
+                            _ = state.recorder.finalize()
+                            state.recorder = None
+
                         # Reset engine with new T2I seed
                         state.play_time = 0.0
                         await asyncio.to_thread(engine.reset)
@@ -289,6 +333,24 @@ async def run_loop(
                                 image=state.seed_frame, prompt=state.prompt
                             ),
                         )
+
+                        # Start new recorder if recording is enabled
+                        if state.recording_enabled:
+                            state.recorder = Recorder(
+                                model_name=config.models.world_engine,
+                                vae_uri=config.models.vae_uri,
+                                seed_frame=state.seed_frame,
+                                initial_prompt=state.prompt or "",
+                                settings=RecordingSettings(
+                                    n_frames=n_frames,
+                                    i2i_interval=i2i_interval,
+                                    i2i_vlm_regen=i2i_vlm_regen,
+                                    mouse_sensitivity=mouse_sensitivity,
+                                    denoise=state.current_denoise,
+                                    blend_falloff=state.blend_falloff,
+                                    click_repainting=state.click_repainting,
+                                ),
+                            )
                     else:
                         # Append I2I regenerated frame and continue
                         # Blend with last world model frame using blend mask
@@ -309,12 +371,46 @@ async def run_loop(
                                 state.blend_mask,
                             )
                         _ = await asyncio.to_thread(engine.append_frame, blended_frame)
+                        if state.recorder is not None:
+                            state.recorder.record_injection(
+                                state.frames,
+                                blended_frame,
+                                state.prompt or "",
+                                "pause_i2i",
+                            )
                         state.last_frame = blended_frame
                         # Add to image history
                         state.image_history.insert(
                             0,
                             ImageHistoryEntry(image=blended_frame, prompt=state.prompt),
                         )
+
+                # Detect recording toggled off from pause menu
+                if not state.recording_enabled and state.recorder is not None:
+                    _ = state.recorder.finalize()
+                    state.recorder = None
+
+                if result.action == "replay":
+                    assert result.replay_json_path is not None
+                    await replay_from_json(
+                        result.replay_json_path, engine, screen, state
+                    )
+                    pause.set()
+                    continue
+
+                if result.action == "rerecord":
+                    assert result.replay_json_path is not None
+                    await replay_from_json(
+                        result.replay_json_path,
+                        engine,
+                        screen,
+                        state,
+                        record=True,
+                        model_name=config.models.world_engine,
+                        vae_uri=config.models.vae_uri,
+                    )
+                    pause.set()
+                    continue
 
                 # Start play timer when resuming
                 state.play_start = time.time()
@@ -386,6 +482,12 @@ async def run_loop(
             )
             state.frames += 1
             state.last_frame = img
+            if state.recorder is not None:
+                state.recorder.record_frame(
+                    state.frames - 1,
+                    filtered_ctrl,
+                    img,  # pyright: ignore[reportUnknownArgumentType]
+                )
             draw(img, state)  # pyright: ignore[reportUnknownArgumentType]
 
             # Pause after first frame so engine is warm before showing pause menu
@@ -430,6 +532,9 @@ async def run_loop(
 
             await asyncio.sleep(0)
     finally:
+        if state.recorder is not None:
+            _ = state.recorder.finalize()
+            state.recorder = None
         pygame.event.set_grab(False)
         pygame.mixer.quit()
         pygame.quit()

@@ -11,6 +11,7 @@ import torch
 from constants import DEFAULT_BLEND_FALLOFF, ImageHistoryEntry
 
 if TYPE_CHECKING:
+    from recorder import Recorder
     from vision_api import VisionResult
 
 
@@ -82,6 +83,10 @@ class ClientState:
     show_prompt: bool = True
     blend_falloff: float = DEFAULT_BLEND_FALLOFF
     click_repainting: bool = True
+
+    # Recording
+    recording_enabled: bool = False
+    recorder: "Recorder | None" = None
 
     def invalidate_prompt_cache(self) -> None:
         """Clear cached prompt surfaces, forcing re-render on next draw."""

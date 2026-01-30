@@ -9,6 +9,7 @@ dependencies = [
     "triton-windows==3.5.1.post23; sys_platform == 'win32'",
     "triton>=3.5.1; sys_platform == 'linux'",
     "comfy-script[default]",
+    "pydantic>=2.12.5",
 ]
 
 [tool.uv]
