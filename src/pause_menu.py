@@ -68,6 +68,7 @@ async def show_pause_menu(
     reset_checked = False
     show_history_checked = state.show_history_previews
     show_prompt_checked = state.show_prompt
+    click_repainting_checked = state.click_repainting
 
     # Menu state
     MENU, GENERATING = "menu", "generating"
@@ -108,7 +109,8 @@ async def show_pause_menu(
         checkbox_y = blend_slider_y + 35
         checkbox2_y = checkbox_y + 28
         checkbox3_y = checkbox2_y + 28
-        button_y = checkbox3_y + 35
+        checkbox4_y = checkbox3_y + 28
+        button_y = checkbox4_y + 35
 
         input_rect = pygame.Rect(content_left, input_y, input_width, input_height)
 
@@ -133,6 +135,9 @@ async def show_pause_menu(
         )
         checkbox3_rect = pygame.Rect(
             content_left, checkbox3_y, checkbox_size, checkbox_size
+        )
+        checkbox4_rect = pygame.Rect(
+            content_left, checkbox4_y, checkbox_size, checkbox_size
         )
 
         # Button row
@@ -301,6 +306,7 @@ async def show_pause_menu(
                                 show_history_previews=show_history_checked,
                                 show_prompt=show_prompt_checked,
                                 blend_falloff=blend_falloff_value,
+                                click_repainting=click_repainting_checked,
                             )
                         )
 
@@ -322,6 +328,7 @@ async def show_pause_menu(
                                 show_history_previews=show_history_checked,
                                 show_prompt=show_prompt_checked,
                                 blend_falloff=blend_falloff_value,
+                                click_repainting=click_repainting_checked,
                             )
                         )
 
@@ -336,6 +343,22 @@ async def show_pause_menu(
                                 show_history_previews=show_history_checked,
                                 show_prompt=show_prompt_checked,
                                 blend_falloff=blend_falloff_value,
+                                click_repainting=click_repainting_checked,
+                            )
+                        )
+
+                    checkbox4_hit = pygame.Rect(
+                        checkbox4_rect.x, checkbox4_rect.y, 220, checkbox_size
+                    )
+                    if checkbox4_hit.collidepoint(e.pos):  # pyright: ignore[reportAny]
+                        click_repainting_checked = not click_repainting_checked
+                        state.click_repainting = click_repainting_checked
+                        save_user_config(
+                            UserConfig(
+                                show_history_previews=show_history_checked,
+                                show_prompt=show_prompt_checked,
+                                blend_falloff=blend_falloff_value,
+                                click_repainting=click_repainting_checked,
                             )
                         )
 
@@ -424,6 +447,7 @@ async def show_pause_menu(
                                 show_history_previews=show_history_checked,
                                 show_prompt=show_prompt_checked,
                                 blend_falloff=blend_falloff_value,
+                                click_repainting=click_repainting_checked,
                             )
                         )
 
@@ -728,6 +752,22 @@ async def show_pause_menu(
             (
                 checkbox3_rect.right + 10,
                 checkbox3_rect.centery - checkbox3_label.get_height() // 2,
+            ),
+        )
+
+        # Click repainting checkbox
+        pygame.draw.rect(screen, (50, 50, 50), checkbox4_rect, border_radius=4)
+        pygame.draw.rect(screen, (100, 100, 100), checkbox4_rect, 2, border_radius=4)
+        if click_repainting_checked:
+            inner4 = checkbox4_rect.inflate(-6, -6)
+            pygame.draw.rect(screen, (100, 200, 100), inner4, border_radius=2)
+
+        checkbox4_label = label_font.render("Click repainting", True, (255, 255, 255))
+        screen.blit(
+            checkbox4_label,
+            (
+                checkbox4_rect.right + 10,
+                checkbox4_rect.centery - checkbox4_label.get_height() // 2,
             ),
         )
 

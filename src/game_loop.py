@@ -71,6 +71,7 @@ async def run_loop(
         show_history_previews=user_config.show_history_previews,
         show_prompt=user_config.show_prompt,
         blend_falloff=user_config.blend_falloff,
+        click_repainting=user_config.click_repainting,
     )
 
     try:
@@ -330,51 +331,55 @@ async def run_loop(
                 await reset(reload_seed=False)
                 state.frames = 0
 
-            # RMB edge detection for vision API (before gen_frame)
-            rmb_pressed = 0x02 in ctrl.button
-            if (
-                rmb_pressed
-                and not state.rmb_was_pressed
-                and state.vision_future is None
-                and state.last_frame is not None  # pyright: ignore[reportUnknownMemberType]
-            ):
-                _ = state.rmb_sound.play()
-                state.vision_future = vision_executor.submit(
-                    describe_frame,
-                    state.last_frame.clone(),
-                    vision_api_url,
-                    vision_model,
-                    config.vision.api_key_env,
-                    config.vision.max_tokens,
-                    config.vision.timeout,
-                )
-            state.rmb_was_pressed = rmb_pressed
+            if state.click_repainting:
+                # RMB edge detection for vision API (before gen_frame)
+                rmb_pressed = 0x02 in ctrl.button
+                if (
+                    rmb_pressed
+                    and not state.rmb_was_pressed
+                    and state.vision_future is None
+                    and state.last_frame is not None  # pyright: ignore[reportUnknownMemberType]
+                ):
+                    _ = state.rmb_sound.play()
+                    state.vision_future = vision_executor.submit(
+                        describe_frame,
+                        state.last_frame.clone(),
+                        vision_api_url,
+                        vision_model,
+                        config.vision.api_key_env,
+                        config.vision.max_tokens,
+                        config.vision.timeout,
+                    )
+                state.rmb_was_pressed = rmb_pressed
 
-            # LMB edge detection for i2i submission (before gen_frame)
-            lmb_pressed = 0x01 in ctrl.button
-            if (
-                lmb_pressed
-                and not state.lmb_was_pressed
-                and state.i2i_future is None
-                and comfyui_url
-                and state.prompt
-                and state.last_frame is not None  # pyright: ignore[reportUnknownMemberType]
-            ):
-                _ = state.lmb_sound.play()
-                state.i2i_pending_prompt = state.prompt  # Track prompt for history
-                state.i2i_future = i2i_executor.submit(
-                    generate_i2i,
-                    comfyui_url,
-                    state.prompt,
-                    state.last_frame,
-                    None,
-                    state.current_denoise,
-                )
-            state.lmb_was_pressed = lmb_pressed
+                # LMB edge detection for i2i submission (before gen_frame)
+                lmb_pressed = 0x01 in ctrl.button
+                if (
+                    lmb_pressed
+                    and not state.lmb_was_pressed
+                    and state.i2i_future is None
+                    and comfyui_url
+                    and state.prompt
+                    and state.last_frame is not None  # pyright: ignore[reportUnknownMemberType]
+                ):
+                    _ = state.lmb_sound.play()
+                    state.i2i_pending_prompt = state.prompt  # Track prompt for history
+                    state.i2i_future = i2i_executor.submit(
+                        generate_i2i,
+                        comfyui_url,
+                        state.prompt,
+                        state.last_frame,
+                        None,
+                        state.current_denoise,
+                    )
+                state.lmb_was_pressed = lmb_pressed
 
-            # Filter out LMB and RMB from ctrl before sending to world model
-            filtered_buttons = ctrl.button - {0x01, 0x02}
-            filtered_ctrl = CtrlInput(button=filtered_buttons, mouse=ctrl.mouse)
+                # Filter out LMB and RMB from ctrl before sending to world model
+                filtered_buttons = ctrl.button - {0x01, 0x02}
+                filtered_ctrl = CtrlInput(button=filtered_buttons, mouse=ctrl.mouse)
+            else:
+                # Pass clicks through to the world model
+                filtered_ctrl = ctrl
 
             img: torch.Tensor = await asyncio.to_thread(  # pyright: ignore[reportUnknownVariableType]
                 engine.gen_frame, ctrl=filtered_ctrl

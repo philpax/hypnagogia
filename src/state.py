@@ -81,6 +81,7 @@ class ClientState:
     show_history_previews: bool = True
     show_prompt: bool = True
     blend_falloff: float = DEFAULT_BLEND_FALLOFF
+    click_repainting: bool = True
 
     def invalidate_prompt_cache(self) -> None:
         """Clear cached prompt surfaces, forcing re-render on next draw."""

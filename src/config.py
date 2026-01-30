@@ -160,6 +160,7 @@ class UserConfigDict(TypedDict, total=False):
     show_history_previews: bool
     show_prompt: bool
     blend_falloff: float
+    click_repainting: bool
 
 
 @dataclass
@@ -169,6 +170,7 @@ class UserConfig:
     show_history_previews: bool = field(default=True)
     show_prompt: bool = field(default=True)
     blend_falloff: float = field(default=DEFAULT_BLEND_FALLOFF)
+    click_repainting: bool = field(default=True)
 
 
 def _get_user_config_path() -> Path:
@@ -190,6 +192,7 @@ def load_user_config() -> UserConfig:
             show_history_previews=data.get("show_history_previews", True),
             show_prompt=data.get("show_prompt", True),
             blend_falloff=data.get("blend_falloff", DEFAULT_BLEND_FALLOFF),
+            click_repainting=data.get("click_repainting", True),
         )
     except (json.JSONDecodeError, OSError):
         return UserConfig()
@@ -202,6 +205,7 @@ def save_user_config(user_config: UserConfig) -> None:
         "show_history_previews": user_config.show_history_previews,
         "show_prompt": user_config.show_prompt,
         "blend_falloff": user_config.blend_falloff,
+        "click_repainting": user_config.click_repainting,
     }
     with open(config_path, "w") as f:
         json.dump(data, f, indent=2)
