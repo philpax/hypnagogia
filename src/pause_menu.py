@@ -84,7 +84,6 @@ async def show_pause_menu(
     input_height = 32
     input_padding = 8
     checkbox_size = 20
-    button_width = 80
     button_height = 36
 
     # Calculate char width for monospace font
@@ -146,51 +145,30 @@ async def show_pause_menu(
             content_left, checkbox5_y, checkbox_size, checkbox_size
         )
 
-        # Button row
-        button_spacing = 10
-        total_buttons_width = button_width * 7 + button_spacing * 6
-        resume_rect = pygame.Rect(
-            center_x - total_buttons_width // 2,
-            button_y,
-            button_width,
-            button_height,
-        )
-        clear_rect = pygame.Rect(
-            resume_rect.right + button_spacing,
-            button_y,
-            button_width,
-            button_height,
-        )
-        submit_rect = pygame.Rect(
-            clear_rect.right + button_spacing,
-            button_y,
-            button_width,
-            button_height,
-        )
-        load_seed_rect = pygame.Rect(
-            submit_rect.right + button_spacing,
-            button_y,
-            button_width,
-            button_height,
-        )
-        replay_rect = pygame.Rect(
-            load_seed_rect.right + button_spacing,
-            button_y,
-            button_width,
-            button_height,
-        )
-        rerecord_rect = pygame.Rect(
-            replay_rect.right + button_spacing,
-            button_y,
-            button_width,
-            button_height,
-        )
-        quit_rect = pygame.Rect(
-            rerecord_rect.right + button_spacing,
-            button_y,
-            button_width,
-            button_height,
-        )
+        # Button row — same width as the rest of the UI, equally distributed
+        n_buttons = 7
+        button_spacing = 8
+        total_spacing = button_spacing * (n_buttons - 1)
+        btn_w = (input_width - total_spacing) // n_buttons
+        btn_rects: list[pygame.Rect] = []
+        for i in range(n_buttons):
+            btn_rects.append(
+                pygame.Rect(
+                    content_left + i * (btn_w + button_spacing),
+                    button_y,
+                    btn_w,
+                    button_height,
+                )
+            )
+        (
+            resume_rect,
+            clear_rect,
+            submit_rect,
+            load_seed_rect,
+            replay_rect,
+            rerecord_rect,
+            quit_rect,
+        ) = btn_rects
 
         # Event handling
         for e in pygame.event.get():
