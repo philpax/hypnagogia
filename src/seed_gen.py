@@ -33,7 +33,7 @@ def _tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
     return Image.fromarray(tensor.cpu().numpy())  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
 
-def _pil_to_tensor(pil_img: Image.Image, target_size: tuple[int, int]) -> torch.Tensor:
+def pil_to_tensor(pil_img: Image.Image, target_size: tuple[int, int]) -> torch.Tensor:
     """Convert PIL Image to (H, W, 3) uint8 tensor with resizing."""
     img = (
         torch.from_numpy(np.array(pil_img.convert("RGB")))  # pyright: ignore[reportUnknownMemberType]
@@ -101,7 +101,7 @@ def generate_t2i(
 
     first_image = images[0]
     assert first_image is not None
-    return _pil_to_tensor(first_image, target_size)
+    return pil_to_tensor(first_image, target_size)
 
 
 def _upload_image(
@@ -204,7 +204,7 @@ def generate_i2i(
 
     first_image = images[0]
     assert first_image is not None
-    return _pil_to_tensor(first_image, target_size)
+    return pil_to_tensor(first_image, target_size)
 
 
 if __name__ == "__main__":

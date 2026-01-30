@@ -11,7 +11,7 @@ import pygame
 import torch
 
 from blending import create_blend_mask
-from seed_gen import ENGINE_RESOLUTION, generate_i2i, generate_t2i
+from seed_gen import ENGINE_RESOLUTION, generate_i2i, generate_t2i, pil_to_tensor
 
 from config import UserConfig, save_user_config
 from constants import PROMPT_PREFIX, PauseMenuResult, i2i_executor, load_prompts
@@ -137,7 +137,7 @@ async def show_pause_menu(
 
         # Button row
         button_spacing = 12
-        total_buttons_width = button_width * 4 + button_spacing * 3
+        total_buttons_width = button_width * 5 + button_spacing * 4
         resume_rect = pygame.Rect(
             center_x - total_buttons_width // 2,
             button_y,
@@ -156,8 +156,14 @@ async def show_pause_menu(
             button_width,
             button_height,
         )
-        quit_rect = pygame.Rect(
+        load_seed_rect = pygame.Rect(
             submit_rect.right + button_spacing,
+            button_y,
+            button_width,
+            button_height,
+        )
+        quit_rect = pygame.Rect(
+            load_seed_rect.right + button_spacing,
             button_y,
             button_width,
             button_height,
@@ -363,6 +369,38 @@ async def show_pause_menu(
                                     None,
                                     denoise_value,
                                 )
+                    if load_seed_rect.collidepoint(e.pos):  # pyright: ignore[reportAny]
+                        import tkinter as tk
+                        from tkinter import filedialog
+
+                        from PIL import Image
+
+                        root = tk.Tk()
+                        root.withdraw()
+                        root.attributes("-topmost", True)  # pyright: ignore[reportUnknownMemberType]
+                        file_path = filedialog.askopenfilename(
+                            parent=root,
+                            title="Select seed image",
+                            filetypes=[
+                                ("Image files", "*.png *.jpg *.jpeg *.bmp *.webp"),
+                                ("All files", "*.*"),
+                            ],
+                        )
+                        root.destroy()
+                        if file_path:
+                            loaded_img = Image.open(file_path)
+                            loaded_tensor = pil_to_tensor(
+                                loaded_img,
+                                (ENGINE_RESOLUTION[1], ENGINE_RESOLUTION[0]),
+                            )
+                            pygame.key.set_repeat(0)
+                            return PauseMenuResult(
+                                action="regenerate",
+                                new_prompt=input_text,
+                                regenerated_frame=loaded_tensor,
+                                reset_with_seed=True,
+                                denoise=denoise_value,
+                            )
 
                 if e.type == pygame.MOUSEBUTTONUP and e.button == 1:
                     slider_dragging = False
@@ -699,6 +737,7 @@ async def show_pause_menu(
             (resume_rect, "Resume"),
             (clear_rect, "Clear"),
             (submit_rect, "Submit"),
+            (load_seed_rect, "Load Seed"),
             (quit_rect, "Quit"),
         ]
         for rect, text in buttons:

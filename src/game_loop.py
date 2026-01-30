@@ -10,7 +10,7 @@ from world_engine import CtrlInput, WorldEngine
 
 from blending import blend_frames, create_blend_mask
 from config import get_config, load_user_config
-from seed_gen import generate_i2i, generate_t2i
+from seed_gen import ENGINE_RESOLUTION, generate_i2i, generate_t2i
 from vision_api import VisionResult, describe_frame
 
 from constants import (
@@ -159,7 +159,11 @@ async def run_loop(
         # Track blend falloff to detect changes
         last_blend_falloff = state.blend_falloff
 
-        await reset(reload_seed=True)
+        # Warm up engine with a black frame instead of generating via T2I
+        state.seed_frame = torch.zeros(
+            ENGINE_RESOLUTION[1], ENGINE_RESOLUTION[0], 3, dtype=torch.uint8
+        )
+        await reset(reload_seed=False)
 
         state.frames = 0
         initial_pause_done = False
