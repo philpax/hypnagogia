@@ -33,7 +33,7 @@ def load_prompts() -> list[str]:
 
 @dataclass
 class PauseMenuResult:
-    action: str  # "resume", "quit", "regenerate", "replay", or "rerecord"
+    action: str  # "resume", "quit", "regenerate", "replay", "rerecord", or "rerecord_primed"
     new_prompt: str | None = None
     regenerated_frame: torch.Tensor | None = None
     reset_with_seed: bool = False  # True = T2I reset, False = I2I append

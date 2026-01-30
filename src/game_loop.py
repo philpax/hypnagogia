@@ -21,7 +21,7 @@ from constants import (
 )
 from input import ctrl_stream
 from pause_menu import show_pause_menu
-from recorder import Recorder, RecordingSettings
+from recorder import RERECORD_PRIME_SECONDS, Recorder, RecordingSettings
 from rendering import draw
 from replay import replay_from_json
 from state import ClientState, GameState
@@ -408,6 +408,21 @@ async def run_loop(
                         record=True,
                         model_name=config.models.world_engine,
                         vae_uri=config.models.vae_uri,
+                    )
+                    pause.set()
+                    continue
+
+                if result.action == "rerecord_primed":
+                    assert result.replay_json_path is not None
+                    await replay_from_json(
+                        result.replay_json_path,
+                        engine,
+                        screen,
+                        state,
+                        record=True,
+                        model_name=config.models.world_engine,
+                        vae_uri=config.models.vae_uri,
+                        prime_seconds=RERECORD_PRIME_SECONDS,
                     )
                     pause.set()
                     continue

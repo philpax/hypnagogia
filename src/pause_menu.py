@@ -16,6 +16,7 @@ from seed_gen import ENGINE_RESOLUTION, generate_i2i, generate_t2i, pil_to_tenso
 
 from config import UserConfig, save_user_config
 from constants import PROMPT_PREFIX, PauseMenuResult, i2i_executor, load_prompts
+from recorder import RERECORD_PRIME_SECONDS
 from state import ClientState
 
 
@@ -146,7 +147,7 @@ async def show_pause_menu(
         )
 
         # Button row — same width as the rest of the UI, equally distributed
-        n_buttons = 7
+        n_buttons = 8
         button_spacing = 8
         total_spacing = button_spacing * (n_buttons - 1)
         btn_w = (input_width - total_spacing) // n_buttons
@@ -167,6 +168,7 @@ async def show_pause_menu(
             load_seed_rect,
             replay_rect,
             rerecord_rect,
+            rerecord_primed_rect,
             quit_rect,
         ) = btn_rects
 
@@ -483,6 +485,28 @@ async def show_pause_menu(
                             return PauseMenuResult(
                                 action="rerecord",
                                 replay_json_path=Path(rerecord_file_path),
+                            )
+                    if rerecord_primed_rect.collidepoint(e.pos):  # pyright: ignore[reportAny]
+                        import tkinter as tk
+                        from tkinter import filedialog
+
+                        root = tk.Tk()
+                        root.withdraw()
+                        root.attributes("-topmost", True)  # pyright: ignore[reportUnknownMemberType]
+                        primed_file_path = filedialog.askopenfilename(
+                            parent=root,
+                            title="Select recording JSON to re-record (primed)",
+                            filetypes=[
+                                ("JSON files", "*.json"),
+                                ("All files", "*.*"),
+                            ],
+                        )
+                        root.destroy()
+                        if primed_file_path:
+                            pygame.key.set_repeat(0)
+                            return PauseMenuResult(
+                                action="rerecord_primed",
+                                replay_json_path=Path(primed_file_path),
                             )
 
                 if e.type == pygame.MOUSEBUTTONUP and e.button == 1:
@@ -857,6 +881,7 @@ async def show_pause_menu(
             (load_seed_rect, "Load Seed"),
             (replay_rect, "Replay"),
             (rerecord_rect, "Re-record"),
+            (rerecord_primed_rect, f"Rerec+{RERECORD_PRIME_SECONDS:.0f}s"),
             (quit_rect, "Quit"),
         ]
         for rect, text in buttons:

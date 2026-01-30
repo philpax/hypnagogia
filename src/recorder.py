@@ -17,6 +17,9 @@ from seed_gen import ENGINE_RESOLUTION
 _PROJECT_ROOT = Path(__file__).parent.parent
 _RECORDINGS_DIR = _PROJECT_ROOT / "recordings"
 
+RECORDING_FPS: float = 30.0
+RERECORD_PRIME_SECONDS: float = 2.0
+
 
 # ── Pydantic models for the recording JSON ──────────────────────────────
 
@@ -114,6 +117,47 @@ class VideoWriter:
         _ = self._proc.wait()
 
 
+def decode_video_frames(
+    mp4_path: Path, n_frames: int, width: int, height: int
+) -> list[torch.Tensor]:
+    """Decode up to *n_frames* RGB24 frames from *mp4_path* via ffmpeg."""
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError(
+            "ffmpeg not found on PATH; install it to enable video decoding"
+        )
+    proc = subprocess.Popen(
+        [
+            ffmpeg,
+            "-i",
+            str(mp4_path),
+            "-frames:v",
+            str(n_frames),
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    frame_size = width * height * 3
+    frames: list[torch.Tensor] = []
+    assert proc.stdout is not None
+    for _ in range(n_frames):
+        data = proc.stdout.read(frame_size)
+        if len(data) < frame_size:
+            break
+        tensor = torch.frombuffer(bytearray(data), dtype=torch.uint8).reshape(
+            height, width, 3
+        )
+        frames.append(tensor)
+    proc.stdout.close()
+    _ = proc.wait()
+    return frames
+
+
 # ── Recorder ────────────────────────────────────────────────────────────
 
 
@@ -157,7 +201,9 @@ class Recorder:
 
         # Start video writer
         w, h = ENGINE_RESOLUTION
-        self._video = VideoWriter(_RECORDINGS_DIR / f"{self._stem}.mp4", w, h, 30.0)
+        self._video = VideoWriter(
+            _RECORDINGS_DIR / f"{self._stem}.mp4", w, h, RECORDING_FPS
+        )
 
         self._timestamp = ts
         self._model_name = model_name

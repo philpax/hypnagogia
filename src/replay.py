@@ -9,7 +9,13 @@ import pygame
 import torch
 from world_engine import CtrlInput, WorldEngine
 
-from recorder import Recorder, Recording, RecordingSettings
+from recorder import (
+    RECORDING_FPS,
+    Recorder,
+    Recording,
+    RecordingSettings,
+    decode_video_frames,
+)
 from rendering import draw
 from seed_gen import ENGINE_RESOLUTION, pil_to_tensor
 from state import ClientState
@@ -26,6 +32,7 @@ async def replay_from_json(
     record: bool = False,
     model_name: str = "",
     vae_uri: str = "",
+    prime_seconds: float = 0.0,
 ) -> None:
     """Replay a recorded JSON session through the engine.
 
@@ -76,8 +83,21 @@ async def replay_from_json(
     sorted_injections = sorted(recording.injections, key=lambda inj: inj.after_frame)
     injection_idx = 0
 
+    # Decode original frames for primed re-recording
+    prime_frame_count = 0
+    original_frames: list[torch.Tensor] = []
+    if prime_seconds > 0 and record:
+        mp4_path = json_path.with_suffix(".mp4")
+        prime_frame_count = min(
+            int(prime_seconds * RECORDING_FPS), len(recording.frames)
+        )
+        w, h = ENGINE_RESOLUTION
+        original_frames = decode_video_frames(mp4_path, prime_frame_count, w, h)
+        # Clamp to actually decoded count
+        prime_frame_count = len(original_frames)
+
     try:
-        for frame_rec in recording.frames:
+        for frame_idx, frame_rec in enumerate(recording.frames):
             # Check for cancellation via pygame events
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
@@ -92,9 +112,16 @@ async def replay_from_json(
                 scroll_wheel=frame_rec.ctrl.scroll_wheel,
             )
 
-            img: torch.Tensor = await asyncio.to_thread(  # pyright: ignore[reportUnknownVariableType]
-                engine.gen_frame, ctrl=ctrl_input
-            )
+            if frame_idx < prime_frame_count:
+                # Phase 1: feed original frame + controls into the engine context
+                img = original_frames[frame_idx]
+                _ = await asyncio.to_thread(engine.append_frame, img, ctrl=ctrl_input)
+            else:
+                # Phase 2: generate with the (possibly new) model
+                img = await asyncio.to_thread(  # pyright: ignore[reportUnknownVariableType]
+                    engine.gen_frame, ctrl=ctrl_input
+                )
+
             draw(img, state)  # pyright: ignore[reportUnknownArgumentType]
 
             if recorder is not None:
