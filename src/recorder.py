@@ -266,7 +266,7 @@ class Recorder:
             injections=self._injections,
         )
         json_path = _RECORDINGS_DIR / f"{self._stem}.json"
-        with open(json_path, "w") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             _ = f.write(recording.model_dump_json(indent=2))
             _ = f.write("\n")
         return json_path
