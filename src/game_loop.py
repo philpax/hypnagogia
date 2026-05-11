@@ -141,7 +141,7 @@ async def run_loop(
             if state.recording_enabled and initial_pause_done:
                 assert state.seed_frame is not None
                 state.recorder = Recorder(
-                    model_name=config.models.world_engine,
+                    model_name=engine.model_uri,
                     vae_uri=config.models.vae_uri,
                     seed_frame=state.seed_frame,
                     initial_prompt=state.prompt or "",
@@ -374,7 +374,7 @@ async def run_loop(
                         # Start new recorder if recording is enabled
                         if state.recording_enabled:
                             state.recorder = Recorder(
-                                model_name=config.models.world_engine,
+                                model_name=engine.model_uri,
                                 vae_uri=config.models.vae_uri,
                                 seed_frame=state.seed_frame,
                                 initial_prompt=state.prompt or "",
@@ -444,7 +444,7 @@ async def run_loop(
                         screen,
                         state,
                         record=True,
-                        model_name=config.models.world_engine,
+                        model_name=engine.model_uri,
                         vae_uri=config.models.vae_uri,
                     )
                     pause.set()
@@ -458,7 +458,7 @@ async def run_loop(
                         screen,
                         state,
                         record=True,
-                        model_name=config.models.world_engine,
+                        model_name=engine.model_uri,
                         vae_uri=config.models.vae_uri,
                         prime_seconds=RERECORD_PRIME_SECONDS,
                     )

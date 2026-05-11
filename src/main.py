@@ -21,6 +21,7 @@ async def main(
     image_seed: int | None = None,
     n_frames: int,
     device: str,
+    model: str,
     quant: str | None,
     i2i_interval: int,
     i2i_vlm_regen: bool,
@@ -40,7 +41,7 @@ async def main(
     await asyncio.to_thread(_cuda_warmup)
 
     engine = Engine(
-        config.models.world_engine,
+        model,
         device=device,
         quant=quant,
         model_config_overrides={
@@ -111,6 +112,11 @@ def cli() -> None:
         help=f"Denoising factor for i2i regeneration (default: {config.i2i.denoise})",
     )
     _ = parser.add_argument(
+        "--model",
+        default=config.models.world_engine,
+        help=f"World engine model URI (default: {config.models.world_engine})",
+    )
+    _ = parser.add_argument(
         "--device",
         default=config.defaults.device,
         help=f"Device to use (default: {config.defaults.device})",
@@ -152,6 +158,7 @@ def cli() -> None:
     url: str = args.url  # pyright: ignore[reportAny]
     seed: int | None = args.seed  # pyright: ignore[reportAny]
     n_frames: int = args.n_frames  # pyright: ignore[reportAny]
+    model: str = args.model  # pyright: ignore[reportAny]
     device: str = args.device  # pyright: ignore[reportAny]
     quant: str | None = args.quant  # pyright: ignore[reportAny]
     i2i_interval: int = args.i2i_interval  # pyright: ignore[reportAny]
@@ -168,6 +175,7 @@ def cli() -> None:
             image_seed=seed,
             n_frames=n_frames,
             device=device,
+            model=model,
             quant=quant,
             i2i_interval=i2i_interval,
             i2i_vlm_regen=i2i_vlm_regen,

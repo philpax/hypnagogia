@@ -46,6 +46,7 @@ Update `config.json` as appropriate. The ComfyUI workflows are specialised to th
 | `--i2i-vlm-regen` | false | Use VLM to generate new prompt before I2I regeneration (requires `--i2i-interval`) |
 | `--denoise` | 0.4 | Denoising strength for I2I regeneration (0.0-1.0) |
 | `--device` | cuda | PyTorch device |
+| `--model` | `Overworld/Waypoint-1.5-1B` | World engine model URI (HF id) |
 | `--quant` | none | World model quantization (`intw8a8`, `fp8w8a8`, `nvfp4`) |
 | `--mouse-sensitivity` | 1.5 | Mouse control multiplier |
 | `--vision-api-url` | https://api.openai.com/v1 | Vision API base URL |
