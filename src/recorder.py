@@ -17,6 +17,8 @@ from seed_gen import ENGINE_RESOLUTION
 _PROJECT_ROOT = Path(__file__).parent.parent
 _RECORDINGS_DIR = _PROJECT_ROOT / "recordings"
 
+# Default playback FPS for legacy recordings made before fps was persisted.
+# Live recordings use the engine's ``inference_fps`` (passed to ``Recorder``).
 RECORDING_FPS: float = 30.0
 RERECORD_PRIME_SECONDS: float = 2.0
 
@@ -62,6 +64,7 @@ class Recording(BaseModel):
     settings: RecordingSettings
     frames: list[FrameRecord]
     injections: list[InjectionRecord]
+    fps: float = RECORDING_FPS
 
 
 # ── VideoWriter ─────────────────────────────────────────────────────────
@@ -188,6 +191,7 @@ class Recorder:
         seed_frame: torch.Tensor,
         initial_prompt: str,
         settings: RecordingSettings,
+        fps: float = RECORDING_FPS,
     ) -> None:
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         safe_model = _sanitize_model_name(model_name)
@@ -201,9 +205,8 @@ class Recorder:
 
         # Start video writer
         w, h = ENGINE_RESOLUTION
-        self._video = VideoWriter(
-            _RECORDINGS_DIR / f"{self._stem}.mp4", w, h, RECORDING_FPS
-        )
+        self._fps = fps
+        self._video = VideoWriter(_RECORDINGS_DIR / f"{self._stem}.mp4", w, h, fps)
 
         self._timestamp = ts
         self._model_name = model_name
@@ -264,6 +267,7 @@ class Recorder:
             settings=self._settings,
             frames=self._frames,
             injections=self._injections,
+            fps=self._fps,
         )
         json_path = _RECORDINGS_DIR / f"{self._stem}.json"
         with open(json_path, "w", encoding="utf-8") as f:

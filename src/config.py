@@ -20,6 +20,7 @@ class DefaultsConfigDict(TypedDict):
     i2i_vlm_regen: bool
     device: str
     mouse_sensitivity: float
+    quant: str | None
 
 
 class ModelsConfigDict(TypedDict):
@@ -73,6 +74,7 @@ class DefaultsConfig:
     i2i_vlm_regen: bool
     device: str
     mouse_sensitivity: float
+    quant: str | None = None
 
 
 @dataclass

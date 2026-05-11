@@ -3,11 +3,13 @@
 # pyright: reportUnusedCallResult=none
 
 import time
+from collections.abc import Callable, Iterable
 
 import pygame
 import torch
 
 from constants import PROMPT_PREFIX
+from engine import SLEEP_RATIO
 from state import ClientState
 
 
@@ -215,3 +217,49 @@ def draw(img: torch.Tensor, state: ClientState) -> None:
         draw_image_history(state.screen, state)
 
     pygame.display.flip()
+
+
+def _iter_sub_frames(batch: torch.Tensor) -> list[torch.Tensor]:
+    """Return a list of (H, W, 3) sub-frames from a batch tensor.
+
+    Accepts either a single ``(H, W, 3)`` frame or a temporally-compressed
+    ``(T, H, W, 3)`` batch.
+    """
+    if batch.dim() == 3:
+        return [batch]
+    return [batch[i] for i in range(batch.shape[0])]
+
+
+def render_batch(
+    batch: torch.Tensor,
+    state: ClientState,
+    pace_s: float,
+    on_sub_frame: Callable[[torch.Tensor, int], None] | None = None,
+) -> None:
+    """Present sub-frames evenly spread over ``pace_s`` seconds.
+
+    Uses a hybrid sleep: yields the CPU via ``pygame.time.wait`` for
+    ``SLEEP_RATIO`` of the remaining interval, then busy-spins the rest for
+    sub-millisecond timing precision. Sleep targets drift by up to a few
+    milliseconds on most OSes, so the busy-spin closes that gap.
+
+    The optional ``on_sub_frame`` callback runs after each draw and is given
+    ``(sub_frame, sub_index)``; the game loop uses it to update
+    ``state.last_frame`` / increment ``state.frames`` / record frames.
+    """
+    frames: Iterable[torch.Tensor] = _iter_sub_frames(batch)
+    frame_list = list(frames)
+    if not frame_list:
+        return
+    step_s = pace_s / len(frame_list)
+    start = time.perf_counter()
+    for i, sub in enumerate(frame_list):
+        draw(sub, state)
+        if on_sub_frame is not None:
+            on_sub_frame(sub, i)
+        deadline = start + step_s * (i + 1)
+        remaining_ms = int((deadline - time.perf_counter()) * SLEEP_RATIO * 1000)
+        if remaining_ms > 0:
+            pygame.time.wait(remaining_ms)
+        while time.perf_counter() < deadline:
+            pass

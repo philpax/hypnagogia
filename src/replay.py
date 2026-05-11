@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pygame
 import torch
-from world_engine import CtrlInput, WorldEngine
+from world_engine import CtrlInput
 
+from engine import Engine
 from recorder import (
-    RECORDING_FPS,
     Recorder,
     Recording,
     RecordingSettings,
@@ -25,7 +25,7 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 
 async def replay_from_json(
     json_path: Path,
-    engine: WorldEngine,
+    engine: Engine,
     _screen: pygame.Surface,
     state: ClientState,
     *,
@@ -77,27 +77,48 @@ async def replay_from_json(
                 blend_falloff=recording.settings.blend_falloff,
                 click_repainting=recording.settings.click_repainting,
             ),
+            fps=float(engine.inference_fps),
         )
 
     # Sort injections by after_frame
     sorted_injections = sorted(recording.injections, key=lambda inj: inj.after_frame)
     injection_idx = 0
 
-    # Decode original frames for primed re-recording
+    # Decode original frames for primed re-recording.
+    # Use the source recording's fps so the priming window is the same
+    # wall-clock duration regardless of model.
     prime_frame_count = 0
     original_frames: list[torch.Tensor] = []
     if prime_seconds > 0 and record:
         mp4_path = json_path.with_suffix(".mp4")
         prime_frame_count = min(
-            int(prime_seconds * RECORDING_FPS), len(recording.frames)
+            int(prime_seconds * recording.fps), len(recording.frames)
         )
         w, h = ENGINE_RESOLUTION
         original_frames = decode_video_frames(mp4_path, prime_frame_count, w, h)
         # Clamp to actually decoded count
         prime_frame_count = len(original_frames)
 
+    tc = engine.temporal_compression
+
+    def _ctrl_from(frame_rec_ctrl) -> CtrlInput:  # pyright: ignore[reportMissingParameterType,reportUnknownParameterType]
+        mouse = frame_rec_ctrl.mouse  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        return CtrlInput(
+            button=set(frame_rec_ctrl.button),  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
+            mouse=(mouse[0], mouse[1]),  # pyright: ignore[reportUnknownArgumentType]
+            scroll_wheel=frame_rec_ctrl.scroll_wheel,  # pyright: ignore[reportUnknownMemberType]
+        )
+
+    def _split_batch(t: torch.Tensor) -> list[torch.Tensor]:
+        return [t] if t.dim() == 3 else [t[i] for i in range(t.shape[0])]
+
     try:
-        for frame_idx, frame_rec in enumerate(recording.frames):
+        # Process records in batches of `tc` so each gen_frame call consumes
+        # the matching number of original controls. tc=1 reduces to the
+        # original frame-by-frame loop.
+        batch_start = 0
+        total = len(recording.frames)
+        while batch_start < total:
             # Check for cancellation via pygame events
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
@@ -105,32 +126,43 @@ async def replay_from_json(
                 if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:  # pyright: ignore[reportAny]
                     return
 
-            mouse = frame_rec.ctrl.mouse
-            ctrl_input = CtrlInput(
-                button=set(frame_rec.ctrl.button),
-                mouse=(mouse[0], mouse[1]),
-                scroll_wheel=frame_rec.ctrl.scroll_wheel,
-            )
+            batch_end = min(batch_start + tc, total)
+            batch_records = recording.frames[batch_start:batch_end]
+            # Use the first record's ctrl as the representative for this
+            # dispatch (subsequent sub-frames are visual interpolation).
+            ctrl_input = _ctrl_from(batch_records[0].ctrl)
 
-            if frame_idx < prime_frame_count:
-                # Phase 1: feed original frame + controls into the engine context
-                img = original_frames[frame_idx]
-                _ = await asyncio.to_thread(engine.append_frame, img, ctrl=ctrl_input)
+            if batch_end <= prime_frame_count:
+                # Phase 1: feed original frames + first ctrl into the engine context.
+                if tc > 1 and len(batch_records) == tc:
+                    stacked = torch.stack(original_frames[batch_start:batch_end])
+                    _ = await asyncio.to_thread(
+                        engine.append_frame, stacked, ctrl=ctrl_input
+                    )
+                else:
+                    _ = await asyncio.to_thread(
+                        engine.append_frame,
+                        original_frames[batch_start],
+                        ctrl=ctrl_input,
+                    )
+                sub_frames = original_frames[batch_start:batch_end]
             else:
-                # Phase 2: generate with the (possibly new) model
-                img = await asyncio.to_thread(  # pyright: ignore[reportUnknownVariableType]
-                    engine.gen_frame, ctrl=ctrl_input
-                )
+                # Phase 2: generate with the (possibly new) model.
+                img_batch = await asyncio.to_thread(engine.gen_frame, ctrl=ctrl_input)
+                sub_frames = _split_batch(img_batch)
 
-            draw(img, state)  # pyright: ignore[reportUnknownArgumentType]
+            # Display the last sub-frame (cheaper than rendering all during replay).
+            draw(sub_frames[-1], state)
 
             if recorder is not None:
-                recorder.record_frame(frame_rec.index, ctrl_input, img)  # pyright: ignore[reportUnknownArgumentType]
+                for rec, sub in zip(batch_records, sub_frames):
+                    recorder.record_frame(rec.index, _ctrl_from(rec.ctrl), sub)
 
-            # Check for pending injections at this frame index
+            # Check for pending injections falling within this batch
+            last_rec_index = batch_records[-1].index
             while injection_idx < len(sorted_injections):
                 inj = sorted_injections[injection_idx]
-                if inj.after_frame > frame_rec.index:
+                if inj.after_frame > last_rec_index:
                     break
                 # Load injection image and append to engine
                 inj_path = _PROJECT_ROOT / inj.image
@@ -145,6 +177,7 @@ async def replay_from_json(
                     )
                 injection_idx += 1
 
+            batch_start = batch_end
             await asyncio.sleep(0)
     finally:
         if recorder is not None:

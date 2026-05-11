@@ -6,10 +6,11 @@ from pathlib import Path
 
 import pygame
 import torch
-from world_engine import CtrlInput, WorldEngine
+from world_engine import CtrlInput
 
 from blending import blend_frames, create_blend_mask
 from config import get_config, load_user_config
+from engine import SLEEP_RATIO, Engine
 from seed_gen import ENGINE_RESOLUTION, generate_i2i, generate_t2i
 from vision_api import VisionResult, describe_frame
 
@@ -22,14 +23,14 @@ from constants import (
 from input import ctrl_stream
 from pause_menu import show_pause_menu
 from recorder import RERECORD_PRIME_SECONDS, Recorder, RecordingSettings
-from rendering import draw
+from rendering import render_batch
 from replay import replay_from_json
 from state import ClientState, GameState
 
 
 async def run_loop(
     *,
-    engine: WorldEngine,
+    engine: Engine,
     seed_frame: torch.Tensor | None,
     n_frames: int,
     mouse_sensitivity: float,
@@ -77,6 +78,9 @@ async def run_loop(
         recording_enabled=user_config.recording_enabled,
     )
 
+    tc = engine.temporal_compression
+    fps_cap = engine.inference_fps
+
     try:
         # Apply initial game state (PAUSED - cursor visible, not grabbed)
         state.apply_game_state()
@@ -85,7 +89,16 @@ async def run_loop(
         pause = asyncio.Event()
         limit = max(1, n_frames - 2)
 
+        # Pipeline state: the most recent CPU batch waiting to be rendered,
+        # and the ctrl that produced it (so the recorder logs the right ctrl).
+        pending: torch.Tensor | None = None
+        pending_ctrl: CtrlInput = CtrlInput()
+        batch_dt = 0.0
+        overhead = 0.0
+        pace_s = 0.0
+
         async def reset(*, reload_seed: bool = False) -> None:
+            nonlocal pending, pending_ctrl
             # Finalize any active recorder before resetting
             if state.recorder is not None:
                 _ = state.recorder.finalize()
@@ -117,6 +130,13 @@ async def run_loop(
                 )
                 _ = await asyncio.to_thread(engine.append_frame, state.seed_frame)
 
+            # Prime the pipeline: produce one initial CPU batch so the loop
+            # has something to render on its first iteration. The first call
+            # also triggers torch.compile for WP-1.5; subsequent resets are
+            # fast.
+            pending = await asyncio.to_thread(engine.warmup)
+            pending_ctrl = CtrlInput()
+
             # Start new recorder if recording is enabled and we have a real session
             if state.recording_enabled and initial_pause_done:
                 assert state.seed_frame is not None
@@ -134,6 +154,7 @@ async def run_loop(
                         blend_falloff=state.blend_falloff,
                         click_repainting=state.click_repainting,
                     ),
+                    fps=fps_cap,
                 )
 
         def handle_scroll(y: int) -> None:
@@ -195,6 +216,14 @@ async def run_loop(
         await reset(reload_seed=False)
 
         state.frames = 0
+
+        def _record_sub(sub: torch.Tensor, _i: int) -> None:
+            """Per-sub-frame side effects: counter, recorder, last_frame."""
+            state.last_frame = sub
+            if state.recorder is not None:
+                state.recorder.record_frame(state.frames, pending_ctrl, sub)
+            state.frames += 1
+
         async for ctrl in ctrls:
             # Regenerate mask if falloff changed
             if state.blend_falloff != last_blend_falloff:
@@ -286,6 +315,11 @@ async def run_loop(
 
             if pause.is_set():
                 pause.clear()
+                # Flush any pending batch so the pause menu has the latest
+                # frame as its background and the recorder records it.
+                if pending is not None:
+                    render_batch(pending, state, 0.0, on_sub_frame=_record_sub)
+                    pending = None
                 # Finalize recording on pause so each recording is one
                 # uninterrupted play segment (reset → pause)
                 if state.recorder is not None:
@@ -322,6 +356,9 @@ async def run_loop(
                         _ = await asyncio.to_thread(
                             engine.append_frame, state.seed_frame
                         )
+                        # Re-prime pipeline after reseed
+                        pending = await asyncio.to_thread(engine.warmup)
+                        pending_ctrl = CtrlInput()
                         state.frames = 0
                         # Clear history on T2I and add new seed
                         state.image_history.clear()
@@ -350,6 +387,7 @@ async def run_loop(
                                     blend_falloff=state.blend_falloff,
                                     click_repainting=state.click_repainting,
                                 ),
+                                fps=fps_cap,
                             )
                     else:
                         # Append I2I regenerated frame and continue
@@ -492,29 +530,45 @@ async def run_loop(
                 # Pass clicks through to the world model
                 filtered_ctrl = ctrl
 
-            img: torch.Tensor = await asyncio.to_thread(  # pyright: ignore[reportUnknownVariableType]
+            # --- Frame pacing pipeline (mirrors world_engine examples/interactive.py)
+            # 1. Dispatch gen_frame — GPU kernels are queued, returns fast.
+            # 2. Render the *previous* batch with pacing sleeps while GPU works.
+            # 3. .cpu() syncs the GPU and transfers the just-computed batch.
+            # 4. Measure overhead (non-render time) to feed back into pacing.
+            t0 = time.perf_counter()
+            next_frames_gpu: torch.Tensor = await asyncio.to_thread(  # pyright: ignore[reportUnknownVariableType]
                 engine.gen_frame, ctrl=filtered_ctrl
             )
-            state.frames += 1
-            state.last_frame = img
-            if state.recorder is not None:
-                state.recorder.record_frame(
-                    state.frames - 1,
-                    filtered_ctrl,
-                    img,  # pyright: ignore[reportUnknownArgumentType]
-                )
-            draw(img, state)  # pyright: ignore[reportUnknownArgumentType]
 
-            # Pause after first frame so engine is warm before showing pause menu
-            if state.frames == 1 and not initial_pause_done:
+            if pending is not None:
+                # Target visual interval for this batch (T sub-frames at fps_cap).
+                # Subtract measured overhead so the *total* cycle hits target_s;
+                # floor at SLEEP_RATIO*batch_dt to prevent render-time feedback
+                # loops when the GPU is slower than the cap.
+                target_s = tc / fps_cap if fps_cap > 0 else 0.0
+                pace_s = max(batch_dt * SLEEP_RATIO, target_s - overhead)
+                render_batch(pending, state, pace_s, on_sub_frame=_record_sub)
+
+            pending = await asyncio.to_thread(next_frames_gpu.cpu)  # pyright: ignore[reportUnknownArgumentType]
+            pending_ctrl = filtered_ctrl
+            batch_dt = time.perf_counter() - t0
+            overhead = batch_dt - pace_s
+
+            # Pause after the first rendered batch so engine is warm before
+            # the pause menu appears.
+            if not initial_pause_done and state.frames > 0:
                 initial_pause_done = True
                 pause.set()
 
-            # Start i2i regeneration every i2i_interval frames (if not already running)
+            # Start i2i regeneration every i2i_interval sub-frames (if not
+            # already running). Cross-boundary check is robust to tc>1, where
+            # state.frames advances by tc per batch and a plain modulus would
+            # skip triggers that fall mid-batch.
+            prev_frames = max(0, state.frames - tc)
             if (
                 i2i_interval > 0
                 and state.frames > 0
-                and state.frames % i2i_interval == 0
+                and state.frames // i2i_interval > prev_frames // i2i_interval
                 and comfyui_url
                 and state.prompt
             ):
