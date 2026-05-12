@@ -23,7 +23,7 @@ class DefaultsConfigDict(TypedDict):
     quant: str | None
 
 
-class ModelsConfigDict(TypedDict):
+class ModelsConfigDict(TypedDict, total=False):
     world_engine: str
     vae_uri: str
 
@@ -80,7 +80,7 @@ class DefaultsConfig:
 @dataclass
 class ModelsConfig:
     world_engine: str
-    vae_uri: str
+    vae_uri: str | None = None
 
 
 @dataclass

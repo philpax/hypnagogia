@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import random
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import torch
 
@@ -40,14 +41,15 @@ async def main(
 
     await asyncio.to_thread(_cuda_warmup)
 
+    model_config_overrides: dict[str, Any] = {"n_frames": n_frames}
+    if config.models.vae_uri is not None:
+        model_config_overrides["ae_uri"] = config.models.vae_uri
+
     engine = Engine(
         model,
         device=device,
         quant=quant,
-        model_config_overrides={
-            "n_frames": n_frames,
-            "ae_uri": config.models.vae_uri,
-        },
+        model_config_overrides=model_config_overrides,
     )
     await run_loop(
         engine=engine,

@@ -31,7 +31,7 @@ async def replay_from_json(
     *,
     record: bool = False,
     model_name: str = "",
-    vae_uri: str = "",
+    vae_uri: str | None = None,
     prime_seconds: float = 0.0,
 ) -> None:
     """Replay a recorded JSON session through the engine.

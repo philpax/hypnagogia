@@ -58,7 +58,7 @@ class Recording(BaseModel):
     version: int = 1
     timestamp: str
     model: str
-    vae_uri: str
+    vae_uri: str | None = None
     seed_image: str
     initial_prompt: str
     settings: RecordingSettings
@@ -179,7 +179,7 @@ class Recorder:
     _video: VideoWriter
     _timestamp: str
     _model_name: str
-    _vae_uri: str
+    _vae_uri: str | None
     _seed_image_rel: str
     _initial_prompt: str
     _settings: RecordingSettings
@@ -187,7 +187,7 @@ class Recorder:
     def __init__(
         self,
         model_name: str,
-        vae_uri: str,
+        vae_uri: str | None,
         seed_frame: torch.Tensor,
         initial_prompt: str,
         settings: RecordingSettings,
