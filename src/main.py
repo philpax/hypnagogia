@@ -4,11 +4,12 @@ import argparse
 import asyncio
 import random
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import torch
-from world_engine import WorldEngine
 
 from config import get_config
+from engine import Engine
 
 from constants import load_prompts
 from game_loop import run_loop
@@ -21,6 +22,8 @@ async def main(
     image_seed: int | None = None,
     n_frames: int,
     device: str,
+    model: str,
+    quant: str | None,
     i2i_interval: int,
     i2i_vlm_regen: bool,
     denoise: float,
@@ -38,13 +41,15 @@ async def main(
 
     await asyncio.to_thread(_cuda_warmup)
 
-    engine = WorldEngine(
-        config.models.world_engine,
+    model_config_overrides: dict[str, Any] = {"n_frames": n_frames}
+    if config.models.vae_uri is not None:
+        model_config_overrides["ae_uri"] = config.models.vae_uri
+
+    engine = Engine(
+        model,
         device=device,
-        model_config_overrides={
-            "n_frames": n_frames,
-            "ae_uri": config.models.vae_uri,
-        },
+        quant=quant,
+        model_config_overrides=model_config_overrides,
     )
     await run_loop(
         engine=engine,
@@ -109,9 +114,20 @@ def cli() -> None:
         help=f"Denoising factor for i2i regeneration (default: {config.i2i.denoise})",
     )
     _ = parser.add_argument(
+        "--model",
+        default=config.models.world_engine,
+        help=f"World engine model URI (default: {config.models.world_engine})",
+    )
+    _ = parser.add_argument(
         "--device",
         default=config.defaults.device,
         help=f"Device to use (default: {config.defaults.device})",
+    )
+    _ = parser.add_argument(
+        "--quant",
+        choices=["intw8a8", "fp8w8a8", "nvfp4"],
+        default=config.defaults.quant,
+        help=f"Quantization (default: {config.defaults.quant or 'none'})",
     )
     _ = parser.add_argument(
         "--mouse-sensitivity",
@@ -144,7 +160,9 @@ def cli() -> None:
     url: str = args.url  # pyright: ignore[reportAny]
     seed: int | None = args.seed  # pyright: ignore[reportAny]
     n_frames: int = args.n_frames  # pyright: ignore[reportAny]
+    model: str = args.model  # pyright: ignore[reportAny]
     device: str = args.device  # pyright: ignore[reportAny]
+    quant: str | None = args.quant  # pyright: ignore[reportAny]
     i2i_interval: int = args.i2i_interval  # pyright: ignore[reportAny]
     i2i_vlm_regen: bool = args.i2i_vlm_regen  # pyright: ignore[reportAny]
     denoise: float = args.denoise  # pyright: ignore[reportAny]
@@ -159,6 +177,8 @@ def cli() -> None:
             image_seed=seed,
             n_frames=n_frames,
             device=device,
+            model=model,
+            quant=quant,
             i2i_interval=i2i_interval,
             i2i_vlm_regen=i2i_vlm_regen,
             denoise=denoise,

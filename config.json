@@ -8,11 +8,11 @@
     "i2i_interval": 0,
     "i2i_vlm_regen": false,
     "device": "cuda",
-    "mouse_sensitivity": 1.5
+    "mouse_sensitivity": 1.5,
+    "quant": null
   },
   "models": {
-    "world_engine": "Overworld/Waypoint-1-Small",
-    "vae_uri": "OpenWorldLabs/owl_vae_f16_c16_distill_v0_nogan"
+    "world_engine": "Overworld/Waypoint-1.5-1B"
   },
   "t2i": {
     "clip": "qwen_3_4b.safetensors",

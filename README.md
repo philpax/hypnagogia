@@ -46,9 +46,18 @@ Update `config.json` as appropriate. The ComfyUI workflows are specialised to th
 | `--i2i-vlm-regen` | false | Use VLM to generate new prompt before I2I regeneration (requires `--i2i-interval`) |
 | `--denoise` | 0.4 | Denoising strength for I2I regeneration (0.0-1.0) |
 | `--device` | cuda | PyTorch device |
+| `--model` | `Overworld/Waypoint-1.5-1B` | World engine model URI (HF id) |
+| `--quant` | none | World model quantization (`intw8a8`, `fp8w8a8`, `nvfp4`) |
 | `--mouse-sensitivity` | 1.5 | Mouse control multiplier |
 | `--vision-api-url` | https://api.openai.com/v1 | Vision API base URL |
 | `--vision-model` | gpt-4o | Vision model name |
+
+The default world model is `Overworld/Waypoint-1.5-1B`. Waypoint-1.5 produces
+multiple frames per inference step (temporal compression > 1) at 1280×720;
+the client spreads each batch over the model's `inference_fps` using a
+dispatch-first pipeline that overlaps rendering with GPU computation.
+Single-frame Waypoint-1 / 1.1 models are still supported — set
+`models.world_engine` in `config.json` to switch.
 
 ### Example
 

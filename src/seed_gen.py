@@ -11,8 +11,9 @@ from PIL import Image
 
 from config import get_config
 
-# Engine resolution (width, height) - hardcoded constant
-ENGINE_RESOLUTION = (640, 360)
+# Engine resolution (width, height) - hardcoded constant. Matches the
+# Waypoint-1.5 reference client; older Waypoint-1 models also accept this.
+ENGINE_RESOLUTION = (1280, 720)
 
 # Cache for loaded state
 _comfy_loaded = False
@@ -33,10 +34,30 @@ def _tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
     return Image.fromarray(tensor.cpu().numpy())  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
 
+def _center_crop_to_aspect(
+    pil_img: Image.Image, target_size: tuple[int, int]
+) -> Image.Image:
+    """Center-crop ``pil_img`` to the aspect ratio of ``target_size`` (H, W)."""
+    target_h, target_w = target_size
+    w, h = pil_img.size
+    if w * target_h > h * target_w:
+        new_w, new_h = h * target_w // target_h, h
+    else:
+        new_w, new_h = w, w * target_h // target_w
+    left = (w - new_w) // 2
+    top = (h - new_h) // 2
+    return pil_img.crop((left, top, left + new_w, top + new_h))
+
+
 def pil_to_tensor(pil_img: Image.Image, target_size: tuple[int, int]) -> torch.Tensor:
-    """Convert PIL Image to (H, W, 3) uint8 tensor with resizing."""
+    """Convert PIL Image to (H, W, 3) uint8 tensor.
+
+    The image is center-cropped to ``target_size``'s aspect ratio before being
+    resized, so non-16:9 inputs aren't distorted.
+    """
+    cropped = _center_crop_to_aspect(pil_img, target_size).convert("RGB")
     img = (
-        torch.from_numpy(np.array(pil_img.convert("RGB")))  # pyright: ignore[reportUnknownMemberType]
+        torch.from_numpy(np.array(cropped))  # pyright: ignore[reportUnknownMemberType]
         .permute(2, 0, 1)
         .unsqueeze(0)
         .float()
