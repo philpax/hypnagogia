@@ -4,7 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.10,<3.11"
 dependencies = [
     "world_engine @ git+https://github.com/Overworldai/world_engine.git",
-    "pygame",
+    "pygame-ce",
     "huggingface_hub[hf_xet]",
     "triton-windows==3.6.0.post26; sys_platform == 'win32'",
     "triton>=3.6.0; sys_platform == 'linux'",
